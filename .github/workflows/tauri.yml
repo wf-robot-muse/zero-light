@@ -107,12 +107,12 @@ jobs:
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          if (-not $WINDOWS_CERT_PASSWORD) {
+          if (-not $env:WINDOWS_CERT_PASSWORD) {
             Write-Error "WINDOWS_CERT_PASSWORD secret is not set"
             exit 1
           }
           $expected = "AFFAFC91081572F081C9F0783A59595E61F4BE00D8F377CA5582DD3D52CE62B3"
-          $secure = ConvertTo-SecureString $WINDOWS_CERT_PASSWORD -AsPlainText -Force
+          $secure = ConvertTo-SecureString $env:WINDOWS_CERT_PASSWORD -AsPlainText -Force
           $cert = Import-PfxCertificate -FilePath "signing/wade-feltman-codesign.pfx" -CertStoreLocation Cert:\CurrentUser\My -Password $secure
           $sha256 = [System.BitConverter]::ToString($cert.GetCertHash([System.Security.Cryptography.HashAlgorithmName]::SHA256)).Replace("-", "")
           if ($sha256 -ne $expected) {
