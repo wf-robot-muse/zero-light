@@ -1,0 +1,22 @@
+{
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "suncalc": "^2.1.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "typescript": "^7",
+    "vite": "^8"
+  },
+  "name": "fishing-hunting-predictor",
+  "private": true,
+  "scripts": {
+    "build": "tsc && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test:smoke": "node scripts/smoke.mjs"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

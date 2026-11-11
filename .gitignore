@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Vite build output (embedded into the app by Tauri at build time)
+dist/
+
+# Rust build output (also covered by src-tauri/.gitignore)
+/target/
+
+# Misc
+.DS_Store
+*.local
+
+# Smoke-test build output
+.smoke-build/
