@@ -3,7 +3,7 @@
 #[tauri::command]
 fn app_info() -> String {
     format!(
-        "Fishing and Hunting Predictor {} — Tauri 2",
+        "Zero Light {} — Tauri 2",
         env!("CARGO_PKG_VERSION")
     )
 }

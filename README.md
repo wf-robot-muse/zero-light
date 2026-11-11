@@ -1,4 +1,4 @@
-# Fishing and Hunting Predictor
+# Zero Light
 
 A clear, concise desktop app (Tauri 2 + TypeScript/Vite): pick a location and
 a target, and it shows the **best times to hunt and fish that day** — at most
@@ -6,7 +6,7 @@ four labelled slots (★ Best / ✓ Good / · Okay), one plain reason each, a da
 verdict, and a "Day held back by:" line. A Trends view shows hunting/fishing
 viability day by day over a week and a month.
 
-**Version 0.1.1** — v1 scope: three preset locations (Tampa Bay FL saltwater,
+**Version 0.2.0** — renamed from "Fishing and Hunting Predictor" (v0.1.x). v1 scope: three preset locations (Tampa Bay FL saltwater,
 Lake Guntersville AL freshwater, Tuscaloosa AL hunting/river) plus custom
 coordinates; nine targets (Snook, Redfish, Speckled Trout, Largemouth Bass,
 Crappie, Catfish, Whitetail Deer, Waterfowl, Turkey); today / tomorrow /
@@ -23,9 +23,9 @@ verified fixed in a headless browser against live forecast and tide data.
 
 | Item | Value |
 | --- | --- |
-| App identifier | `com.wf.robot.muse.fishinghuntingpredictor` |
-| Product name | `FishingHuntingPredictor` |
-| Window | 1150 × 820, title `Fishing and Hunting Predictor` |
+| App identifier | `com.wf.robot.muse.zerolight` |
+| Product name | `ZeroLight` |
+| Window | 1150 × 820, title `Zero Light` |
 | Stack | Tauri 2, TypeScript + Vite (port 1420), Rust core (app-info command only — logic is in the frontend) |
 
 ## How the scoring works (evidence rules)
@@ -117,3 +117,9 @@ per-user install, no admin), macOS Apple Silicon (dmg/app), Linux x64 and
 Linux ARM64 (deb/AppImage) — uploading each bundle set as a run artifact.
 Builds are unsigned (SmartScreen/Gatekeeper warnings apply) until signing is
 configured.
+
+## License
+
+Copyright (c) 2026 Wade Feltman. All rights reserved. See [LICENSE](LICENSE).
+This is not open-source software; no license to use, copy, modify, or
+distribute it is granted.

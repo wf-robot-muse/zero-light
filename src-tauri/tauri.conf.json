@@ -7,7 +7,7 @@
     "windows": [
       {
         "height": 820,
-        "title": "Fishing and Hunting Predictor",
+        "title": "Zero Light",
         "width": 1150
       }
     ]
@@ -34,7 +34,7 @@
       }
     }
   },
-  "identifier": "com.wf.robot.muse.fishinghuntingpredictor",
-  "productName": "FishingHuntingPredictor",
-  "version": "0.1.1"
+  "identifier": "com.wf.robot.muse.zerolight",
+  "productName": "ZeroLight",
+  "version": "0.2.0"
 }

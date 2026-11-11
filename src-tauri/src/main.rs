@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    fishing_hunting_predictor_lib::run()
+    zero_light_lib::run()
 }

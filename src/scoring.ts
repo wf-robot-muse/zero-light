@@ -255,12 +255,29 @@ export function frontPackageScore(target: TargetDef, hours: HourWeather[]): numb
   return clamp(Math.round(9 + pressurePart + swingPart), 0, 14);
 }
 
-export function dayQuality(target: TargetDef, date: Date, hours: HourWeather[]): number {
+export interface DayQualityOpts {
+  /** Real water temperature (°F) from a USGS gauge (item #1). For fish it
+   *  replaces the air-temperature proxy in the temperature-band term. */
+  waterTempF?: number;
+  /** Peak-rut window active for this location/date (item #3, whitetail). */
+  rutPeak?: boolean;
+}
+
+export function dayQuality(
+  target: TargetDef,
+  date: Date,
+  hours: HourWeather[],
+  opts?: DayQualityOpts,
+): number {
   const meanTemp = hours.length
     ? hours.reduce((s, h) => s + h.tempF, 0) / hours.length
     : typicalTempF(date, 33);
+  const bandTemp =
+    opts?.waterTempF !== undefined && target.kind !== "hunting" ? opts.waterTempF : meanTemp;
+  const season =
+    opts?.rutPeak && target.id === "whitetail" ? 18 : seasonScore(target, date);
   return clamp(
-    seasonScore(target, date) + tempBandScore(target, meanTemp) + frontPackageScore(target, hours),
+    season + tempBandScore(target, bandTemp) + frontPackageScore(target, hours),
     0,
     50,
   );
@@ -276,8 +293,8 @@ export function typicalTempF(date: Date, lat: number): number {
 }
 
 /** Synthetic hours for a typical day (astronomy + season only). */
-function typicalHours(date: Date, lat: number): HourWeather[] {
-  const mean = typicalTempF(date, lat);
+function typicalHours(date: Date, lat: number, meanOverride?: number): HourWeather[] {
+  const mean = meanOverride ?? typicalTempF(date, lat);
   const out: HourWeather[] = [];
   for (let h = 0; h < 24; h++) {
     const diurnal = 6 * Math.sin(((h - 9) / 24) * 2 * Math.PI);
@@ -348,7 +365,10 @@ function scoreHour(
   let reason = "";
   if (light >= 15 && tide >= 15) {
     anchor = Math.min(40, anchor + 8); // overlap bonus, capped
-    reason = hour.time <= astro.sunrise ? "Moving water in low light at dawn" : "Moving water in low light toward dusk";
+    const nearDawn =
+      Math.abs(hour.time.getTime() - astro.sunrise.getTime()) <=
+      Math.abs(hour.time.getTime() - astro.sunset.getTime());
+    reason = nearDawn ? "Moving water in low light at dawn" : "Moving water in low light toward dusk";
   } else if (tide >= 20) {
     reason = "Moving water — tide running";
   } else if (light >= 20) {
@@ -405,6 +425,19 @@ export interface DayInputs {
   /** External veto (e.g. red tide medium/high, closure). Dangerous wind is
    *  also applied internally. */
   veto?: string | null;
+  /** Real water temperature (°F) from a nearby USGS gauge (item #1). */
+  waterTempF?: number;
+  /** Peak rut active for this location/date (item #3). */
+  rutPeak?: boolean;
+  /** Typical mean temperature (°F) for this date from NCEI normals
+   *  (item #7) — used only when hours is empty (typical day). */
+  typicalMeanF?: number;
+  /** The location's UTC offset in seconds (item #5). SunCalc works in
+   *  true instants while forecast hours are location wall-clock; when
+   *  this is supplied, astronomy is shifted into the same wall-clock
+   *  frame so anchors and displayed times agree in the location's
+   *  timezone rather than the device's. */
+  tzOffsetSec?: number;
 }
 
 /** Build one day's plan: ranked slots + verdict, per spec §5. */
@@ -412,9 +445,26 @@ export function generateDayPlan(input: DayInputs): DayPlan {
   const { target, lat, lon } = input;
   const date = new Date(input.date.getFullYear(), input.date.getMonth(), input.date.getDate());
   const typical = input.hours.length === 0;
-  const hours = typical ? typicalHours(date, lat) : [...input.hours].sort((a, b) => a.time.getTime() - b.time.getTime());
+  const hours = typical
+    ? typicalHours(date, lat, input.typicalMeanF)
+    : [...input.hours].sort((a, b) => a.time.getTime() - b.time.getTime());
   const astro = computeAstro(date, lat, lon);
-  const dq = dayQuality(target, date, hours);
+  if (input.tzOffsetSec !== undefined) {
+    const deviceOffsetSec = -date.getTimezoneOffset() * 60;
+    const shiftMs = (input.tzOffsetSec - deviceOffsetSec) * 1000;
+    if (shiftMs !== 0) {
+      const shift = (d: Date | null) => (d ? new Date(d.getTime() + shiftMs) : null);
+      astro.sunrise = shift(astro.sunrise)!;
+      astro.sunset = shift(astro.sunset)!;
+      astro.moonrise = shift(astro.moonrise);
+      astro.moonset = shift(astro.moonset);
+      astro.moonTransit = shift(astro.moonTransit)!;
+    }
+  }
+  const dq = dayQuality(target, date, hours, {
+    waterTempF: input.waterTempF,
+    rutPeak: input.rutPeak,
+  });
 
   const maxWind = Math.max(...hours.map((h) => h.windMph));
   let veto = input.veto ?? null;

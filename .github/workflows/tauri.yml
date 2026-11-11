@@ -7,6 +7,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  ui-check:
+    name: UI regression check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install headless Chromium
+        run: npx playwright install --with-deps chromium-headless-shell
+
+      - name: Build web frontend
+        run: npm run build
+
+      # Renders the built app headlessly with mocked API responses and
+      # asserts the planner and trends actually populate. Added after the
+      # v0.1.0 startup bug passed the engine-only smoke test (item #6).
+      - name: Render check
+        run: node scripts/ui-check.mjs
+
   build:
     name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.platform }}
@@ -68,9 +94,90 @@ jobs:
       - name: Build Tauri app (${{ matrix.bundles }})
         run: npx tauri build --bundles ${{ matrix.bundles }}
 
+      # Windows installer signing (item #8): the same self-signed
+      # certificate used for GoodEnoughCraft (CN=Wade Feltman). The
+      # encrypted PFX is committed at signing/wade-feltman-codesign.pfx;
+      # only its password is a repo secret (WINDOWS_CERT_PASSWORD). The
+      # build fails if the signing certificate's SHA-256 fingerprint
+      # does not match the published one. Self-signing is tamper
+      # evidence only — SmartScreen may still warn on other machines.
+      - name: Sign Windows bundles
+        if: matrix.name == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if (-not $WINDOWS_CERT_PASSWORD) {
+            Write-Error "WINDOWS_CERT_PASSWORD secret is not set"
+            exit 1
+          }
+          $expected = "AFFAFC91081572F081C9F0783A59595E61F4BE00D8F377CA5582DD3D52CE62B3"
+          $secure = ConvertTo-SecureString $WINDOWS_CERT_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath "signing/wade-feltman-codesign.pfx" -CertStoreLocation Cert:\CurrentUser\My -Password $secure
+          $sha256 = [System.BitConverter]::ToString($cert.GetCertHash([System.Security.Cryptography.HashAlgorithmName]::SHA256)).Replace("-", "")
+          if ($sha256 -ne $expected) {
+            Write-Error "Signing certificate fingerprint mismatch: got $sha256"
+            exit 1
+          }
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
+          $targets = @()
+          $targets += Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue
+          $targets += Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi" -ErrorAction SilentlyContinue
+          $targets += Get-Item "src-tauri/target/release/zero-light.exe" -ErrorAction SilentlyContinue
+          if (-not $targets) { Write-Error "No Windows bundles found to sign"; exit 1 }
+          foreach ($t in $targets) {
+            & $signtool sign /sha1 $cert.Thumbprint /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $t.FullName
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool failed for $($t.FullName)"; exit 1 }
+            $sig = Get-AuthenticodeSignature $t.FullName
+            $signerSha = [System.BitConverter]::ToString($sig.SignerCertificate.GetCertHash([System.Security.Cryptography.HashAlgorithmName]::SHA256)).Replace("-", "")
+            if ($signerSha -ne $expected) {
+              Write-Error "Signed file $($t.Name) does not carry the expected certificate"
+              exit 1
+            }
+            Write-Host "Signed and verified: $($t.Name)"
+          }
+
       - name: Upload bundles
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: src-tauri/target/release/bundle/**/*
           if-no-files-found: error
+
+  web:
+    name: Deploy web build (GitHub Pages)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build web frontend
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -2,6 +2,9 @@ import { defineConfig } from "vite";
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  // Relative asset paths: the same dist/ is served from the GitHub Pages
+  // subpath (/zero-light/) and from Tauri's local protocol.
+  base: "./",
   // Prevent Vite from clearing the screen, so Rust compiler errors stay visible.
   clearScreen: false,
   server: {

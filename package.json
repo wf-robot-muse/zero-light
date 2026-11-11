@@ -1,22 +1,26 @@
 {
   "dependencies": {
     "@tauri-apps/api": "^2",
-    "suncalc": "^2.1.4"
+    "suncalc": "^2.1.4",
+    "leaflet": "^1.9.4"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "typescript": "^7",
-    "vite": "^8"
+    "vite": "^8",
+    "@types/leaflet": "^1.9.12",
+    "playwright": "^1.49.0"
   },
-  "name": "fishing-hunting-predictor",
+  "name": "zero-light",
   "private": true,
   "scripts": {
     "build": "tsc && vite build",
     "dev": "vite",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test:smoke": "node scripts/smoke.mjs"
+    "test:smoke": "node scripts/smoke.mjs",
+    "test:ui": "node scripts/ui-check.mjs"
   },
   "type": "module",
-  "version": "0.1.1"
+  "version": "0.2.0"
 }
