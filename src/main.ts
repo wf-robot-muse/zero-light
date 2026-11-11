@@ -74,7 +74,7 @@ async function ensureData(): Promise<void> {
   const key = `${lat},${lon}`;
   if (state.weatherFor === key || state.loading) return;
   state.loading = true;
-  $("status").textContent = "Loading forecast…";
+  $("#status").textContent = "Loading forecast…";
   try {
     state.weather = await fetchWeather(lat, lon);
     state.weatherFor = key;
@@ -90,7 +90,7 @@ async function ensureData(): Promise<void> {
     state.tidesFor = state.location.id;
   }
   state.loading = false;
-  $("status").textContent = state.weather
+  $("#status").textContent = state.weather
     ? ""
     : "Forecast unavailable (offline?) — showing typical-day estimates from astronomy and season only.";
   render();
@@ -106,7 +106,7 @@ function planFor(date: Date): DayPlan {
 }
 
 function renderPlanner(): void {
-  const el = $("planner");
+  const el = $("#planner");
   const date = new Date();
   date.setDate(date.getDate() + state.dayOffset);
   const plan = planFor(date);
@@ -155,7 +155,7 @@ function renderPlanner(): void {
 }
 
 function renderTrends(): void {
-  const el = $("trends");
+  const el = $("#trends");
   const target = currentTarget();
   const blocks: string[] = [];
   const plans: { date: Date; plan: DayPlan }[] = [];
@@ -198,8 +198,8 @@ function renderTrends(): void {
 }
 
 function render(): void {
-  $("planner").hidden = state.view !== "planner";
-  $("trends").hidden = state.view !== "trends";
+  $("#planner").hidden = state.view !== "planner";
+  $("#trends").hidden = state.view !== "trends";
   if (state.view === "planner") renderPlanner();
   else renderTrends();
 }
@@ -217,7 +217,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   locSel.innerHTML = LOCATIONS.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
   locSel.addEventListener("change", () => {
     state.location = LOCATIONS.find((l) => l.id === locSel.value) ?? LOCATIONS[0];
-    $("custom-coords").hidden = state.location.id !== "custom";
+    $("#custom-coords").hidden = state.location.id !== "custom";
     state.weatherFor = "";
     state.tidesFor = "";
     rebuildTargets();
@@ -230,7 +230,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     render();
   });
 
-  $("custom-apply").addEventListener("click", () => {
+  $("#custom-apply").addEventListener("click", () => {
     const lat = parseFloat($<HTMLInputElement>("#custom-lat").value);
     const lon = parseFloat($<HTMLInputElement>("#custom-lon").value);
     if (Number.isFinite(lat) && Number.isFinite(lon)) {
@@ -266,19 +266,19 @@ window.addEventListener("DOMContentLoaded", async () => {
   const keys = loadApiKeys();
   $<HTMLInputElement>("#usgs-key").value = keys.usgs;
   $<HTMLInputElement>("#ncei-token").value = keys.ncei;
-  $("save-keys").addEventListener("click", () => {
+  $("#save-keys").addEventListener("click", () => {
     saveApiKeys({
       usgs: $<HTMLInputElement>("#usgs-key").value.trim(),
       ncei: $<HTMLInputElement>("#ncei-token").value.trim(),
     });
-    $("status").textContent = "Keys saved on this device only.";
+    $("#status").textContent = "Keys saved on this device only.";
   });
 
   // Rust app-info command (replaces the foundation's greet example).
   try {
-    $("app-info").textContent = await invoke<string>("app_info");
+    $("#app-info").textContent = await invoke<string>("app_info");
   } catch {
-    $("app-info").textContent = "Fishing and Hunting Predictor 0.1.0";
+    $("#app-info").textContent = "Fishing and Hunting Predictor 0.1.1";
   }
 
   void ensureData();

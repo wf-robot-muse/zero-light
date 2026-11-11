@@ -6,11 +6,18 @@ four labelled slots (★ Best / ✓ Good / · Okay), one plain reason each, a da
 verdict, and a "Day held back by:" line. A Trends view shows hunting/fishing
 viability day by day over a week and a month.
 
-**Version 0.1.0** — v1 scope: three preset locations (Tampa Bay FL saltwater,
+**Version 0.1.1** — v1 scope: three preset locations (Tampa Bay FL saltwater,
 Lake Guntersville AL freshwater, Tuscaloosa AL hunting/river) plus custom
 coordinates; nine targets (Snook, Redfish, Speckled Trout, Largemouth Bass,
 Crappie, Catfish, Whitetail Deer, Waterfowl, Turkey); today / tomorrow /
 day-after planning.
+
+**0.1.1 (fix):** the 0.1.0 build's interface failed to finish starting up —
+several element lookups in `src/main.ts` were missing their `#` id prefix, so
+setup stopped before any data loaded and the planner stayed empty. All
+lookups fixed, and a CSS rule now keeps the custom-coordinates row hidden
+until Custom is chosen. Caught by rendering the app for screenshots;
+verified fixed in a headless browser against live forecast and tide data.
 
 ## Configuration
 

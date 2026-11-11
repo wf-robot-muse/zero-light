@@ -121,3 +121,6 @@ footer.note { text-align: center; margin-top: 22px; }
 .settings summary { cursor: pointer; font-weight: 600; }
 .settings .field { margin-top: 12px; max-width: 420px; }
 .settings button { margin-top: 12px; }
+
+/* The hidden attribute must win over .field flex layout (custom coordinates, view sections). */
+[hidden] { display: none !important; }

@@ -1,6 +1,6 @@
 [package]
 name = "fishing-hunting-predictor"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fishing and Hunting Predictor - best times to hunt and fish by location"
 authors = ["WF-Robot Muse"]
 edition = "2021"
