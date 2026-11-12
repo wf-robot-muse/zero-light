@@ -251,15 +251,17 @@ async function handleReverse(request, env, ctx, url) {
   const ll = parseLatLon(url);
   if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
   const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
-  const key = `rev:${cellLat}:${cellLon}`;
+  const key = `rev2:${cellLat}:${cellLon}`;
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
   const rl = await upstreamCount(env, "rev", ip);
 
   return serveCached(env, ctx, key, GEO_TTL_SEC, 0, async () => {
     if (rl.count >= GEO_DAILY_UPSTREAM_CAP) return null;
+    // type=city: the label names the containing city ("Near Tampa, FL")
+    // rather than a street address at the cell centre.
     const upstream =
       `https://api.geoapify.com/v1/geocode/reverse?lat=${cellLat}&lon=${cellLon}` +
-      `&limit=1&lang=en&apiKey=${env.GEOAPIFY_API_KEY}`;
+      `&limit=1&lang=en&type=city&apiKey=${env.GEOAPIFY_API_KEY}`;
     const res = await fetch(upstream, { headers: { "user-agent": "ZeroLight-Cache/1.0" } });
     if (!res.ok) return null;
     const j = await res.json().catch(() => null);
@@ -359,7 +361,7 @@ async function handleNormals(request, env, ctx, url) {
   const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
   const clat = parseFloat(cellLat);
   const clon = parseFloat(cellLon);
-  const key = `normals:${cellLat}:${cellLon}`;
+  const key = `normals2:${cellLat}:${cellLon}`;
 
   return serveCached(env, ctx, key, NORMALS_TTL_SEC, 7 * 86400, async () => {
     const headers = { token: env.NCEI_CDO_TOKEN };
@@ -370,24 +372,31 @@ async function handleNormals(request, env, ctx, url) {
     );
     if (!stRes.ok) return null;
     const stations = await stRes.json().catch(() => null);
-    const stationId = stations?.results?.[0]?.id;
-    if (!stationId) return JSON.stringify({});
-    const dataRes = await fetch(
-      `https://www.ncdc.noaa.gov/cdo-web/api/v2/data?datasetid=NORMAL_DLY&stationid=${stationId}` +
-        `&datatypeid=DLY-TAVG-NORMAL&startdate=2010-01-01&enddate=2010-12-31&units=standard&limit=1000`,
-      { headers },
-    );
-    if (!dataRes.ok) return null;
-    const data = await dataRes.json().catch(() => null);
-    if (!data || !Array.isArray(data.results)) return null;
-    const out = {};
-    for (const r of data.results) {
-      if (r.datatype !== "DLY-TAVG-NORMAL") continue;
-      const mmdd = String(r.date ?? "").slice(5, 10);
-      const v = typeof r.value === "number" ? r.value / 10 : NaN;
-      if (/^\d{2}-\d{2}$/.test(mmdd) && Number.isFinite(v)) out[mmdd] = v;
+    const ids = (stations?.results ?? [])
+      .map((r) => r?.id)
+      .filter((x) => typeof x === "string" && x)
+      .slice(0, 5);
+    // Try each nearby station in turn: the first hit in the extent is
+    // often a station without published daily normals.
+    for (const stationId of ids) {
+      const dataRes = await fetch(
+        `https://www.ncdc.noaa.gov/cdo-web/api/v2/data?datasetid=NORMAL_DLY&stationid=${stationId}` +
+          `&datatypeid=DLY-TAVG-NORMAL&startdate=2010-01-01&enddate=2010-12-31&units=standard&limit=1000`,
+        { headers },
+      );
+      if (!dataRes.ok) continue;
+      const data = await dataRes.json().catch(() => null);
+      if (!data || !Array.isArray(data.results)) continue;
+      const out = {};
+      for (const r of data.results) {
+        if (r.datatype !== "DLY-TAVG-NORMAL") continue;
+        const mmdd = String(r.date ?? "").slice(5, 10);
+        const v = typeof r.value === "number" ? r.value / 10 : NaN;
+        if (/^\d{2}-\d{2}$/.test(mmdd) && Number.isFinite(v)) out[mmdd] = v;
+      }
+      if (Object.keys(out).length) return JSON.stringify(out);
     }
-    return JSON.stringify(out);
+    return JSON.stringify({});
   });
 }
 
