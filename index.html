@@ -20,7 +20,7 @@
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
             </svg>
           </button>
-          <button id="info-btn" class="icon-btn" type="button" title="How ratings work" aria-label="How ratings work">
+          <button id="info-btn" class="icon-btn" type="button" title="Information" aria-label="Information" aria-haspopup="menu" aria-expanded="false">
             <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="9.2"></circle>
               <line x1="12" y1="11" x2="12" y2="16"></line>
@@ -28,27 +28,47 @@
             </svg>
           </button>
         </div>
+        <div id="info-menu" class="info-menu" role="menu" hidden>
+          <button type="button" role="menuitem" id="menu-how">How ratings work</button>
+          <button type="button" role="menuitem" id="menu-about">About &amp; credits</button>
+        </div>
       </header>
 
       <section class="card controls">
-        <div class="field">
-          <label for="location">Location</label>
-          <select id="location"></select>
-        </div>
-        <div class="field custom-coords" id="custom-coords" hidden>
-          <label>Custom location</label>
-          <div class="row">
-            <input id="custom-lat" type="number" step="0.0001" placeholder="Latitude" />
-            <input id="custom-lon" type="number" step="0.0001" placeholder="Longitude" />
-            <button id="custom-apply" type="button">Use</button>
+        <div class="field location-field">
+          <label for="place-search">Location</label>
+          <div class="search-box">
+            <input id="place-search" type="text" placeholder="City, lake, ZIP, or lat, lon" autocomplete="off" maxlength="80" enterkeyhint="search" />
+            <button id="map-btn" class="box-btn" type="button" title="Pick on map" aria-label="Pick on map">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 4 3.5 5.8v13.4L9 17.4l6 1.8 5.5-1.8V4L15 5.8 9 4z"></path>
+                <path d="M9 4v13.4"></path>
+                <path d="M15 5.8v13.4"></path>
+              </svg>
+            </button>
+            <span class="box-sep" aria-hidden="true"></span>
+            <button id="geo-btn" class="box-btn" type="button" title="Use my location" aria-label="Use my location">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="6.5"></circle>
+                <line x1="12" y1="2.5" x2="12" y2="5.5"></line>
+                <line x1="12" y1="18.5" x2="12" y2="21.5"></line>
+                <line x1="2.5" y1="12" x2="5.5" y2="12"></line>
+                <line x1="18.5" y1="12" x2="21.5" y2="12"></line>
+                <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle>
+              </svg>
+            </button>
           </div>
-          <div class="row">
-            <button id="near-me" type="button">◎ Near me</button>
-            <input id="zip" type="text" inputmode="numeric" maxlength="5" placeholder="ZIP code" />
-            <button id="zip-go" type="button">Look up</button>
+          <p class="note" id="search-status">Type a place name, ZIP code, or coordinates, then press Enter — or pick on the map.</p>
+          <ul id="pick-list" class="pick-list" hidden></ul>
+          <div id="map-panel" hidden>
+            <div id="map"></div>
+            <p class="note" id="map-readout"></p>
+            <div class="row">
+              <button id="map-use" type="button">Use this spot</button>
+              <button id="map-cancel" type="button">Cancel</button>
+            </div>
           </div>
-          <p class="note" id="custom-label">Tap the map or drag the pin to set the exact spot.</p>
-          <div id="map"></div>
+          <p class="note credit-line">Place search <a href="https://www.geoapify.com/" target="_blank" rel="noopener">powered by Geoapify</a></p>
         </div>
         <div class="field">
           <label for="target">Target</label>
@@ -87,25 +107,12 @@
       </footer>
     </main>
 
-    <!-- Settings modal (item #12): API keys + export toggles + cache endpoint -->
+    <!-- Settings modal (item #12; keys/endpoint removed in v0.3.0, item #20) -->
     <div id="settings-modal" class="modal-backdrop" hidden>
       <div class="modal-card" role="dialog" aria-label="Settings">
         <div class="modal-head">
           <h2>Settings</h2>
           <button type="button" class="icon-btn modal-close" data-close="settings-modal" title="Close" aria-label="Close">✕</button>
-        </div>
-        <p class="note">Keys are stored only on this device and are never sent anywhere except the service they belong to.</p>
-        <div class="field">
-          <label for="usgs-key">USGS Water Data API key — live gauge water temperature &amp; flow</label>
-          <input id="usgs-key" type="password" autocomplete="off" placeholder="(none)" />
-        </div>
-        <div class="field">
-          <label for="ncei-token">NOAA NCEI CDO token — climate normals behind “typical” days</label>
-          <input id="ncei-token" type="password" autocomplete="off" placeholder="(none)" />
-        </div>
-        <div class="field">
-          <label for="cache-endpoint">Shared cache endpoint (optional)</label>
-          <input id="cache-endpoint" type="text" autocomplete="off" placeholder="https://zero-light-cache.…/ (blank = direct)" />
         </div>
         <h3>Calendar export</h3>
         <label class="check"><input id="export-typical" type="checkbox" /> Include typical days (beyond the forecast)</label>
@@ -135,6 +142,33 @@
           <button type="button" class="icon-btn modal-close" data-close="day-modal" title="Close" aria-label="Close">✕</button>
         </div>
         <div id="day-modal-content"></div>
+      </div>
+    </div>
+
+    <!-- About & credits modal (item #18) -->
+    <div id="about-modal" class="modal-backdrop" hidden>
+      <div class="modal-card" role="dialog" aria-label="About and credits">
+        <div class="modal-head">
+          <h2>About &amp; credits</h2>
+          <button type="button" class="icon-btn modal-close" data-close="about-modal" title="Close" aria-label="Close">✕</button>
+        </div>
+        <div id="about-content"></div>
+      </div>
+    </div>
+
+    <!-- Expanded map modal (item #17): the inline map element moves here -->
+    <div id="map-modal" class="modal-backdrop" hidden>
+      <div class="modal-card map-card" role="dialog" aria-label="Pick a location on the map">
+        <div class="modal-head">
+          <h2>Pick a spot</h2>
+          <button type="button" class="icon-btn" id="map-modal-close" title="Cancel" aria-label="Cancel">✕</button>
+        </div>
+        <div id="map-modal-slot"></div>
+        <p class="note" id="map-readout-modal"></p>
+        <div class="row modal-actions">
+          <button id="map-use-modal" type="button">Use this spot</button>
+          <button id="map-cancel-modal" type="button">Cancel</button>
+        </div>
       </div>
     </div>
 

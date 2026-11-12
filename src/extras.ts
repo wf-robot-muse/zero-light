@@ -3,6 +3,7 @@
 // the app falls back to its v1 behaviour. Nothing here may throw.
 
 import { cachedJson, cachedJsonUrl, TTL } from "./cache";
+import { CACHE_ENDPOINT } from "./config";
 
 // ---------------------------------------------------------------- USGS (#1)
 // USGS Water Data OGC API (api.waterdata.usgs.gov/ogcapi/v0) — the new API
@@ -35,13 +36,54 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   return 2 * r * Math.asin(Math.sqrt(a));
 }
 
+/** v0.3.0 (item #20): the primary path is the Layer 2 Worker, which
+ *  holds the USGS key as a secret and caches readings in D1. If the
+ *  Worker is unreachable (or has no reading), fall back to the keyless
+ *  direct OGC queries below (rate-capped, but functional). */
 export async function fetchUsgsReading(
   lat: number,
   lon: number,
-  apiKey: string,
   force = false,
 ): Promise<UsgsReading | undefined> {
-  const headers: Record<string, string> = apiKey ? { "X-Api-Key": apiKey } : {};
+  try {
+    const res = await cachedJson<Partial<UsgsReading>>(
+      `usgs-worker:${lat.toFixed(1)},${lon.toFixed(1)}`,
+      TTL.usgsMs,
+      async () => {
+        const r = await fetch(`${CACHE_ENDPOINT}/usgs?lat=${lat}&lon=${lon}`);
+        if (!r.ok) throw new Error(`cache usgs ${r.status}`);
+        return (await r.json()) as Partial<UsgsReading>;
+      },
+      { force },
+    );
+    const d = res.data;
+    if (
+      d &&
+      typeof d.stationId === "string" &&
+      d.stationId &&
+      (typeof d.waterTempF === "number" || typeof d.dischargeCfs === "number")
+    ) {
+      return {
+        waterTempF: typeof d.waterTempF === "number" ? d.waterTempF : undefined,
+        dischargeCfs: typeof d.dischargeCfs === "number" ? d.dischargeCfs : undefined,
+        turbidity: typeof d.turbidity === "number" ? d.turbidity : undefined,
+        stationName: typeof d.stationName === "string" ? d.stationName : d.stationId,
+        stationId: d.stationId,
+        observedAt: typeof d.observedAt === "string" ? d.observedAt : undefined,
+      };
+    }
+  } catch {
+    /* fall through to the direct path */
+  }
+  return fetchUsgsReadingDirect(lat, lon, force);
+}
+
+async function fetchUsgsReadingDirect(
+  lat: number,
+  lon: number,
+  force = false,
+): Promise<UsgsReading | undefined> {
+  const headers: Record<string, string> = {};
   const base = "https://api.waterdata.usgs.gov/ogcapi/v0/collections";
   try {
     const d = 0.75; // ~80 km box
@@ -165,53 +207,31 @@ export async function fetchHabVeto(lat: number, lon: number, force = false): Pro
 }
 
 // ------------------------------------------------------- NCEI normals (#7)
-// NOAA NCEI Climate Data Online: dataset NORMAL_DLY, datatype
-// DLY-TAVG-NORMAL (°F ×10 in CDO responses? — CDO returns tenths of a
-// degree for normals in metric; with units=standard the value is °F×10).
-// Best-effort: returns a map of MM-DD → typical mean temperature °F.
+// v0.3.0 (item #20): normals come from the Layer 2 Worker, which holds
+// the NCEI CDO token as a secret and caches the (effectively static)
+// normals in D1. The Worker returns a plain {"MM-DD": tempF} object.
+// No Worker → no normals; typical days fall back to astronomy/season,
+// exactly as v0.2.0 behaved with no token entered.
 
 export async function fetchNormals(
   lat: number,
   lon: number,
-  token: string,
 ): Promise<Map<string, number> | undefined> {
-  if (!token) return undefined;
-  const headers = { token };
   try {
-    const ext = `${lon - 0.6},${lat - 0.6},${lon + 0.6},${lat + 0.6}`;
-    const stations = await cachedJson<{ results?: { id: string }[] }>(
-      `ncei-stations:${ext}`,
+    const res = await cachedJson<Record<string, unknown>>(
+      `normals-worker:${lat.toFixed(1)},${lon.toFixed(1)}`,
       TTL.normalsMs,
       async () => {
-        const r2 = await fetch(
-          `https://www.ncdc.noaa.gov/cdo-web/api/v2/stations?datasetid=NORMAL_DLY&extent=${ext}&limit=5`,
-          { headers },
-        );
-        if (!r2.ok) throw new Error(`NCEI stations ${r2.status}`);
-        return r2.json();
-      },
-    );
-    const stationId = stations.data.results?.[0]?.id;
-    if (!stationId) return undefined;
-    const year = 2010; // normals are published per "2010" pseudo-year in CDO
-    const data = await cachedJson<{ results?: { date: string; datatype: string; value: number }[] }>(
-      `ncei-normals:${stationId}`,
-      TTL.normalsMs,
-      async () => {
-        const res = await fetch(
-          `https://www.ncdc.noaa.gov/cdo-web/api/v2/data?datasetid=NORMAL_DLY&stationid=${stationId}` +
-            `&datatypeid=DLY-TAVG-NORMAL&startdate=${year}-01-01&enddate=${year}-12-31&units=standard&limit=1000`,
-          { headers },
-        );
-        if (!res.ok) throw new Error(`NCEI data ${res.status}`);
-        return res.json();
+        const r = await fetch(`${CACHE_ENDPOINT}/normals?lat=${lat}&lon=${lon}`);
+        if (!r.ok) throw new Error(`cache normals ${r.status}`);
+        return (await r.json()) as Record<string, unknown>;
       },
     );
     const map = new Map<string, number>();
-    for (const r of data.data.results ?? []) {
-      if (r.datatype !== "DLY-TAVG-NORMAL") continue;
-      const mmdd = r.date.slice(5, 10);
-      map.set(mmdd, r.value / 10);
+    for (const [k, v] of Object.entries(res.data ?? {})) {
+      if (/^\d{2}-\d{2}$/.test(k) && typeof v === "number" && Number.isFinite(v)) {
+        map.set(k, v);
+      }
     }
     return map.size ? map : undefined;
   } catch {
@@ -292,6 +312,91 @@ export async function lookupZip(zip: string): Promise<ZipResult | undefined> {
     };
   } catch {
     return undefined;
+  }
+}
+
+// ------------------------------------------- Place-name geocoding (#17)
+// Place names resolve through the Layer 2 Worker (items #17/#20): the
+// Geoapify key lives server-side as a Worker secret, and lookups are
+// cached twice — locally on this device and shared in D1 (~90-day
+// aging, decided 2026-11-12). The user's SELECTED location is never
+// sent to the shared cache; it stays in local storage only.
+// Returns: candidates array (possibly empty = no match), or null when
+// the service is unreachable.
+
+export interface PlaceCandidate {
+  lat: number;
+  lon: number;
+  label: string;
+  detail: string;
+}
+
+const GEO_LOCAL_TTL_MS = 90 * 86400_000; // mirrors the Layer 2 aging
+
+export async function geocodePlace(query: string): Promise<PlaceCandidate[] | null> {
+  const norm = query.trim().toLowerCase().replace(/\s+/g, " ");
+  if (norm.length < 2) return [];
+  try {
+    const res = await cachedJson<{ results?: unknown }>(
+      `geocode:${norm}`,
+      GEO_LOCAL_TTL_MS,
+      async () => {
+        const r = await fetch(
+          `${CACHE_ENDPOINT}/geocode?q=${encodeURIComponent(query.trim())}`,
+        );
+        if (!r.ok) throw new Error(`geocode ${r.status}`);
+        return (await r.json()) as { results?: unknown };
+      },
+    );
+    const out: PlaceCandidate[] = [];
+    const list = Array.isArray(res.data?.results) ? (res.data.results as unknown[]) : [];
+    for (const c of list) {
+      const o = c as Record<string, unknown>;
+      const lat = o.lat;
+      const lon = o.lon;
+      if (
+        typeof lat === "number" &&
+        typeof lon === "number" &&
+        Number.isFinite(lat) &&
+        Number.isFinite(lon) &&
+        Math.abs(lat) <= 90 &&
+        Math.abs(lon) <= 180 &&
+        typeof o.label === "string" &&
+        o.label
+      ) {
+        out.push({
+          lat,
+          lon,
+          label: o.label.slice(0, 120),
+          detail: typeof o.detail === "string" ? o.detail.slice(0, 120) : "",
+        });
+      }
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** Nearest place name for a point (map readout, geolocation label).
+ *  The Worker snaps to the 0.1° cell before querying upstream, so the
+ *  exact point never leaves the device-side request pattern. */
+export async function reverseLabel(lat: number, lon: number): Promise<string | null> {
+  try {
+    const res = await cachedJson<{ label?: unknown }>(
+      `reverse:${lat.toFixed(1)},${lon.toFixed(1)}`,
+      GEO_LOCAL_TTL_MS,
+      async () => {
+        const r = await fetch(`${CACHE_ENDPOINT}/reverse?lat=${lat}&lon=${lon}`);
+        if (!r.ok) throw new Error(`reverse ${r.status}`);
+        return (await r.json()) as { label?: unknown };
+      },
+    );
+    return typeof res.data?.label === "string" && res.data.label
+      ? res.data.label.slice(0, 120)
+      : null;
+  } catch {
+    return null;
   }
 }
 

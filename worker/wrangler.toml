@@ -1,11 +1,10 @@
-# Zero Light shared cache Worker (item #15, Layer 2).
-# Setup (once, by the account owner):
-#   1. npx wrangler d1 create zero-light-cache   → paste the id below
-#   2. npx wrangler d1 execute zero-light-cache --file=worker/schema.sql
-#   3. npx wrangler secret put PURGE_SECRET
-#   4. Deploy via the "Deploy cache Worker" GitHub Actions workflow
-#      (needs repo secrets CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID)
-#      or locally: npx wrangler deploy --config worker/wrangler.toml
+# Zero Light shared cache Worker (items #15/#20, Layer 2).
+# Setup is automated by the "Deploy cache Worker" GitHub Actions
+# workflow (.github/workflows/deploy-worker.yml): it creates the D1
+# database if needed, substitutes the real database_id for the
+# placeholder below at deploy time, applies schema.sql, deploys, and
+# sets the Worker secrets (GEOAPIFY_API_KEY, USGS_API_KEY,
+# NCEI_CDO_TOKEN, PURGE_SECRET) from repo secrets.
 
 name = "zero-light-cache"
 main = "worker.js"

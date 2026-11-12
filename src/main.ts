@@ -8,7 +8,6 @@ import {
   dayBand,
   type DayPlan,
   type TargetDef,
-  type TargetKind,
   type Tides,
 } from "./scoring";
 import {
@@ -18,10 +17,16 @@ import {
   dateKey,
   parseDateKey,
   addDaysKey,
-  TAMPA_TIDE_STATION,
   type WeatherByDay,
 } from "./data";
-import { loadSettings, saveSettings, type AppSettings } from "./config";
+import {
+  loadSettings,
+  saveSettings,
+  loadLastPlace,
+  saveLastPlace,
+  CACHE_ENDPOINT,
+  type AppSettings,
+} from "./config";
 import {
   fetchUsgsReading,
   fetchHabVeto,
@@ -29,32 +34,24 @@ import {
   fetchTideStations,
   nearestTideStation,
   lookupZip,
+  geocodePlace,
+  reverseLabel,
   rutForLocation,
   type UsgsReading,
+  type PlaceCandidate,
 } from "./extras";
 import { downloadIcs, googleUrl, outlookUrl, type ExportDay } from "./calendar";
 
-interface LocationPreset {
-  id: string;
-  name: string;
+/** The one selected place (item #17). null = nothing selected yet —
+ *  the app sits at its "enter a location" first-run state. */
+export interface Place {
   lat: number;
   lon: number;
-  kinds: TargetKind[];
-  tideStation?: string;
+  label: string;
 }
 
-const LOCATIONS: LocationPreset[] = [
-  { id: "tampa", name: "Tampa Bay, FL — saltwater", lat: 27.9506, lon: -82.4572, kinds: ["saltwater"], tideStation: TAMPA_TIDE_STATION },
-  { id: "guntersville", name: "Lake Guntersville, AL — freshwater lake", lat: 34.4207, lon: -86.3947, kinds: ["freshwater"] },
-  { id: "tuscaloosa", name: "Tuscaloosa, AL — hunting / river", lat: 33.2098, lon: -87.5692, kinds: ["hunting", "freshwater"] },
-  { id: "custom", name: "Custom location…", lat: 0, lon: 0, kinds: ["saltwater", "freshwater", "hunting"] },
-];
-
 const state = {
-  location: LOCATIONS[0],
-  customLat: 27.9506,
-  customLon: -82.4572,
-  customLabel: "",
+  place: null as Place | null,
   targetId: "redfish",
   dayOffset: 0,
   view: "planner" as "planner" | "trends",
@@ -75,13 +72,13 @@ const state = {
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
 function currentLatLon(): { lat: number; lon: number } {
-  if (state.location.id === "custom") return { lat: state.customLat, lon: state.customLon };
-  return { lat: state.location.lat, lon: state.location.lon };
+  // With no place selected, fall back to the centre of the US — used
+  // only to centre the first-run map, never for scoring.
+  return state.place ?? { lat: 39.5, lon: -98.35 };
 }
 
 function locationShortName(): string {
-  if (state.location.id === "custom") return state.customLabel || "Custom location";
-  return state.location.name.split(" — ")[0];
+  return state.place?.label || "No location selected";
 }
 
 function currentTarget(): TargetDef {
@@ -118,6 +115,13 @@ function esc(s: string): string {
 // ------------------------------------------------------------- data flow
 
 async function ensureData(force = false): Promise<void> {
+  if (!state.place) {
+    // First-run state (item #17): nothing to load until a location is
+    // chosen. No default location, no automatic geolocation prompt.
+    $("#status").textContent = "";
+    render();
+    return;
+  }
   const { lat, lon } = currentLatLon();
   const key = `${lat},${lon}`;
   if (state.loading) return;
@@ -126,7 +130,7 @@ async function ensureData(force = false): Promise<void> {
   $("#status").textContent = "Loading forecast…";
   try {
     state.weather = await fetchWeather(lat, lon, {
-      cacheEndpoint: state.settings.cacheEndpoint || undefined,
+      cacheEndpoint: CACHE_ENDPOINT,
       force,
     });
     state.weatherFor = key;
@@ -137,28 +141,23 @@ async function ensureData(force = false): Promise<void> {
 
   // Secondary sources, each independent and best-effort.
   const jobs: Promise<void>[] = [];
-  if (state.location.tideStation) {
-    state.tideStationId = state.location.tideStation;
-    state.tideStationName = "St. Petersburg, FL";
-  } else {
-    jobs.push(
-      (async () => {
-        const stations = await fetchTideStations(force);
-        const nearest = nearestTideStation(stations, lat, lon);
-        state.tideStationId = nearest?.id ?? "";
-        state.tideStationName = nearest?.name ?? "";
-      })(),
-    );
-  }
   jobs.push(
     (async () => {
-      state.usgs = await fetchUsgsReading(lat, lon, state.settings.usgs, force);
+      const stations = await fetchTideStations(force);
+      const nearest = nearestTideStation(stations, lat, lon);
+      state.tideStationId = nearest?.id ?? "";
+      state.tideStationName = nearest?.name ?? "";
+    })(),
+  );
+  jobs.push(
+    (async () => {
+      state.usgs = await fetchUsgsReading(lat, lon, force);
     })(),
     (async () => {
       state.habVeto = await fetchHabVeto(lat, lon, force);
     })(),
     (async () => {
-      state.normals = await fetchNormals(lat, lon, state.settings.ncei);
+      state.normals = await fetchNormals(lat, lon);
     })(),
   );
   await Promise.all(jobs);
@@ -242,6 +241,16 @@ function slotAddLinks(day: ExportDay, slotIdx: number): string {
 
 function renderPlanner(): void {
   const el = $("#planner");
+  if (!state.place) {
+    el.innerHTML = `
+      <section class="card empty-state">
+        <h2>Enter a location</h2>
+        <p class="note">Use the search box above — a place name, a ZIP code, or coordinates —
+        tap the map icon to pick a spot, or the crosshair to use your location.
+        Your last location is remembered on this device for next time.</p>
+      </section>`;
+    return;
+  }
   const key = addDaysKey(startKey(), state.dayOffset);
   const plan = planForKey(key);
   const target = currentTarget();
@@ -337,6 +346,14 @@ function daySummary(key: string): { band: string; best: string; hi: number; lo: 
 
 function renderTrends(): void {
   const el = $("#trends");
+  if (!state.place) {
+    el.innerHTML = `
+      <section class="card empty-state">
+        <h2>Enter a location</h2>
+        <p class="note">Trends appear once a location is chosen above.</p>
+      </section>`;
+    return;
+  }
   const target = currentTarget();
   const start = startKey();
   const blocks: string[] = [];
@@ -529,57 +546,318 @@ const INFO_HTML = `
   state-published peak-breeding data (AL/FL/GA/MS/TX) and are approximate — Tennessee publishes
   none, so none is shown there.</p>`;
 
-// ------------------------------------------------------------- map (#10)
+// ------------------------------------------- unified location (#17)
+// One search box: typed coordinates, ZIP, or place name; the crosshair
+// (device geolocation, #19) and the folded-map icon (below) all feed
+// the same applyPlace(). The selected place persists on-device only.
 
-let leafletMap: L.Map | null = null;
-let leafletMarker: L.Marker | null = null;
+function setSearchStatus(msg: string): void {
+  $("#search-status").textContent = msg;
+}
 
-function setCustom(lat: number, lon: number, label: string): void {
-  state.customLat = lat;
-  state.customLon = lon;
-  state.customLabel = label;
-  $<HTMLInputElement>("#custom-lat").value = String(Math.round(lat * 10000) / 10000);
-  $<HTMLInputElement>("#custom-lon").value = String(Math.round(lon * 10000) / 10000);
-  $("#custom-label").textContent = label
-    ? `${label} — ${lat.toFixed(4)}, ${lon.toFixed(4)}`
-    : `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
-  if (leafletMarker && leafletMap) {
-    leafletMarker.setLatLng([lat, lon]);
-    leafletMap.setView([lat, lon], Math.max(leafletMap.getZoom(), 9));
-  }
+function applyPlace(p: Place): void {
+  const place: Place = {
+    lat: Math.round(p.lat * 10000) / 10000,
+    lon: Math.round(p.lon * 10000) / 10000,
+    label: p.label.slice(0, 120),
+  };
+  state.place = place;
+  saveLastPlace(place);
+  $<HTMLInputElement>("#place-search").value = place.label;
+  setSearchStatus(`${place.label} — ${place.lat.toFixed(4)}, ${place.lon.toFixed(4)}`);
+  hidePickList();
+  closeMapAll();
   state.weatherFor = "";
   state.extrasFor = "";
+  rebuildTargets();
   void ensureData();
 }
 
-function initMap(): void {
-  if (leafletMap) {
-    leafletMap.invalidateSize();
+function hidePickList(): void {
+  const list = $("#pick-list");
+  list.hidden = true;
+  list.replaceChildren();
+}
+
+function showPickList(candidates: PlaceCandidate[]): void {
+  const list = $("#pick-list");
+  list.replaceChildren();
+  for (const c of candidates) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const name = document.createElement("span");
+    name.className = "pick-name";
+    name.textContent = c.label;
+    const detail = document.createElement("span");
+    detail.className = "pick-detail";
+    detail.textContent = c.detail || `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}`;
+    btn.append(name, detail);
+    btn.addEventListener("click", () => applyPlace(c));
+    li.append(btn);
+    list.append(li);
+  }
+  list.hidden = false;
+  setSearchStatus("More than one match — pick the right one:");
+}
+
+/** Detection order (decided 2026-11-12): coordinates, then ZIP, then
+ *  place name. All input is validated before use (input-security rule). */
+async function resolveSearch(): Promise<void> {
+  const input = $<HTMLInputElement>("#place-search");
+  const q = input.value.trim();
+  hidePickList();
+  if (!q) {
+    setSearchStatus("Type a place name, ZIP code, or coordinates, then press Enter.");
     return;
   }
-  const { lat, lon } = currentLatLon();
-  leafletMap = L.map("map").setView([lat, lon], 9);
+  if (q.length > 80) {
+    setSearchStatus("That search is too long — 80 characters at most.");
+    return;
+  }
+  const coord = q.match(/^(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/);
+  if (coord) {
+    const lat = parseFloat(coord[1]);
+    const lon = parseFloat(coord[2]);
+    if (Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+      applyPlace({ lat, lon, label: `${lat.toFixed(4)}, ${lon.toFixed(4)}` });
+    } else {
+      setSearchStatus("Coordinates out of range: latitude −90 to 90, longitude −180 to 180.");
+    }
+    return;
+  }
+  if (/^\d{5}$/.test(q)) {
+    setSearchStatus("Looking up ZIP…");
+    const found = await lookupZip(q);
+    if (found) applyPlace(found);
+    else setSearchStatus(`No match found for ZIP ${q}.`);
+    return;
+  }
+  if (!/^[\p{L}\p{N} ,.'#°-]+$/u.test(q)) {
+    setSearchStatus("Place names can use letters, numbers, spaces, and , . ' - only.");
+    return;
+  }
+  setSearchStatus("Searching…");
+  const results = await geocodePlace(q);
+  if (results === null) {
+    setSearchStatus(
+      "Place search is unavailable right now — try a ZIP code, coordinates, or the map.",
+    );
+    return;
+  }
+  if (!results.length) {
+    setSearchStatus(`No match found for “${q}”.`);
+    return;
+  }
+  if (results.length === 1) {
+    applyPlace(results[0]);
+    return;
+  }
+  showPickList(results);
+}
+
+/** Device geolocation (item #19): errors are reported by their real
+ *  cause, and the lookup options suit Wi-Fi-only devices like Fire
+ *  tablets (no high-accuracy demand, generous timeout, cached fix OK). */
+function locateMe(): void {
+  hidePickList();
+  if (!("geolocation" in navigator)) {
+    setSearchStatus(
+      "This device does not offer geolocation — use a place name, ZIP code, coordinates, or the map.",
+    );
+    return;
+  }
+  setSearchStatus("Locating…");
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const near = await reverseLabel(lat, lon);
+      applyPlace({
+        lat,
+        lon,
+        label: near ?? `Near me (±${Math.round(pos.coords.accuracy)} m)`,
+      });
+    },
+    (err) => {
+      if (err.code === err.PERMISSION_DENIED) {
+        setSearchStatus(
+          "Location permission was not granted. Allow location for this site in your browser settings — or use a place name, ZIP code, coordinates, or the map.",
+        );
+      } else if (err.code === err.POSITION_UNAVAILABLE) {
+        setSearchStatus(
+          "This device couldn't determine a location. On Fire tablets, location comes from Wi-Fi — check that Location is ON in the device settings and Wi-Fi is connected. Or use a place name, ZIP code, coordinates, or the map.",
+        );
+      } else {
+        setSearchStatus(
+          "Locating timed out. Check the Wi-Fi connection and try again — or use a place name, ZIP code, coordinates, or the map.",
+        );
+      }
+    },
+    { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 },
+  );
+}
+
+// ------------------------------------------------------------- map (#17)
+// Inline Leaflet panel under the search box, expandable to a large
+// modal. One map element moves between the two homes. The pin is a
+// WORKING selection: nothing applies until "Use this spot" (decided
+// 2026-11-12). In the modal, Esc/✕ cancel everything; the collapse
+// control returns to the inline panel with the pin kept.
+
+let leafletMap: L.Map | null = null;
+let leafletMarker: L.Marker | null = null;
+let expandBtn: HTMLButtonElement | null = null;
+let pendingPin: { lat: number; lon: number } | null = null;
+let pendingLabel = "";
+let mapIsOpen = false;
+let mapIsExpanded = false;
+
+function pinIcon(): L.DivIcon {
+  return L.divIcon({ className: "map-pin", html: "<span></span>", iconSize: [18, 18], iconAnchor: [9, 9] });
+}
+
+function updateReadouts(): void {
+  const text = pendingPin
+    ? `${pendingLabel ? `Near ${pendingLabel} — ` : ""}${pendingPin.lat.toFixed(4)}, ${pendingPin.lon.toFixed(4)}`
+    : "Tap the map to drop the pin.";
+  $("#map-readout").textContent = text;
+  $("#map-readout-modal").textContent = text;
+}
+
+function setPending(lat: number, lon: number): void {
+  pendingPin = {
+    lat: Math.round(lat * 10000) / 10000,
+    lon: Math.round(lon * 10000) / 10000,
+  };
+  pendingLabel = "";
+  if (!leafletMarker && leafletMap) {
+    leafletMarker = L.marker([lat, lon], { draggable: true, icon: pinIcon() }).addTo(leafletMap);
+    leafletMarker.on("dragend", () => {
+      const p = leafletMarker!.getLatLng();
+      setPending(p.lat, p.lng);
+    });
+  } else if (leafletMarker) {
+    leafletMarker.setLatLng([lat, lon]);
+  }
+  updateReadouts();
+  void (async () => {
+    const label = await reverseLabel(lat, lon);
+    // Only apply if the pin hasn't moved since this lookup started.
+    if (label && pendingPin && Math.abs(pendingPin.lat - lat) < 0.001 && Math.abs(pendingPin.lon - lon) < 0.001) {
+      pendingLabel = label;
+      updateReadouts();
+    }
+  })();
+}
+
+function initMap(): void {
+  const el = $("#map");
+  const hasPlace = !!state.place;
+  const c = currentLatLon();
+  leafletMap = L.map("map").setView([c.lat, c.lon], hasPlace ? 10 : 4);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "© OpenStreetMap contributors",
     maxZoom: 18,
   }).addTo(leafletMap);
-  const icon = L.divIcon({ className: "map-pin", html: "<span></span>", iconSize: [18, 18], iconAnchor: [9, 9] });
-  leafletMarker = L.marker([lat, lon], { draggable: true, icon }).addTo(leafletMap);
-  leafletMarker.on("dragend", () => {
-    const p = leafletMarker!.getLatLng();
-    setCustom(p.lat, p.lng, "");
+  const ExpandControl = L.Control.extend({
+    onAdd: () => {
+      const btn = L.DomUtil.create("button", "map-expand-btn") as HTMLButtonElement;
+      btn.type = "button";
+      btn.textContent = "⤢";
+      btn.title = "Expand map";
+      btn.setAttribute("aria-label", "Expand map");
+      L.DomEvent.disableClickPropagation(btn);
+      L.DomEvent.on(btn, "click", () => toggleMapExpand());
+      expandBtn = btn;
+      return btn;
+    },
   });
-  leafletMap.on("click", (e: L.LeafletMouseEvent) => setCustom(e.latlng.lat, e.latlng.lng, ""));
+  leafletMap.addControl(new ExpandControl({ position: "topright" }));
+  leafletMap.on("click", (e: L.LeafletMouseEvent) => setPending(e.latlng.lat, e.latlng.lng));
+  if (hasPlace) setPending(c.lat, c.lon);
+  else updateReadouts();
   setTimeout(() => leafletMap?.invalidateSize(), 50);
+}
+
+function openMap(): void {
+  mapIsOpen = true;
+  $("#map-panel").hidden = false;
+  if (!leafletMap) {
+    initMap();
+  } else {
+    // Re-centre on the current place with a fresh working pin.
+    const c = currentLatLon();
+    if (state.place) {
+      leafletMap.setView([c.lat, c.lon], Math.max(leafletMap.getZoom(), 10));
+      setPending(c.lat, c.lon);
+    }
+    setTimeout(() => leafletMap?.invalidateSize(), 50);
+  }
+}
+
+function closeMapAll(): void {
+  if (mapIsExpanded) collapseMap();
+  mapIsOpen = false;
+  pendingPin = null;
+  pendingLabel = "";
+  $("#map-panel").hidden = true;
+}
+
+function expandMap(): void {
+  const el = $("#map");
+  $("#map-modal-slot").append(el);
+  $("#map-modal").hidden = false;
+  mapIsExpanded = true;
+  if (expandBtn) {
+    expandBtn.textContent = "⤡";
+    expandBtn.title = "Collapse map";
+    expandBtn.setAttribute("aria-label", "Collapse map");
+  }
+  setTimeout(() => leafletMap?.invalidateSize(), 60);
+}
+
+function collapseMap(): void {
+  const el = $("#map");
+  const panel = $("#map-panel");
+  panel.insertBefore(el, panel.firstChild);
+  $("#map-modal").hidden = true;
+  mapIsExpanded = false;
+  if (expandBtn) {
+    expandBtn.textContent = "⤢";
+    expandBtn.title = "Expand map";
+    expandBtn.setAttribute("aria-label", "Expand map");
+  }
+  setTimeout(() => leafletMap?.invalidateSize(), 60);
+}
+
+function toggleMapExpand(): void {
+  if (mapIsExpanded) collapseMap();
+  else expandMap();
+}
+
+function confirmMap(): void {
+  if (!pendingPin) {
+    setSearchStatus("Tap the map to drop the pin first.");
+    return;
+  }
+  applyPlace({
+    lat: pendingPin.lat,
+    lon: pendingPin.lon,
+    label:
+      pendingLabel ||
+      `${pendingPin.lat.toFixed(4)}, ${pendingPin.lon.toFixed(4)}`,
+  });
 }
 
 // ------------------------------------------------------------- wiring
 
 function rebuildTargets(): void {
+  // Any searched place can host any target kind (the v0.2.0 preset
+  // kind restrictions went away with the presets, item #17).
   const sel = $<HTMLSelectElement>("#target");
-  const allowed = TARGETS.filter((t) => state.location.kinds.includes(t.kind));
-  sel.innerHTML = allowed.map((t) => `<option value="${t.id}">${t.name}</option>`).join("");
-  if (!allowed.some((t) => t.id === state.targetId)) state.targetId = allowed[0].id;
+  sel.innerHTML = TARGETS.map((t) => `<option value="${t.id}">${t.name}</option>`).join("");
+  if (!TARGETS.some((t) => t.id === state.targetId)) state.targetId = TARGETS[0].id;
   sel.value = state.targetId;
 }
 
@@ -587,18 +865,57 @@ function openModal(id: string): void {
   $(`#${id}`).hidden = false;
 }
 
+// ------------------------------------------------- About (item #18)
+// Disclaimer wording settled with Wade on 2026-11-12 (Option B + the
+// Option C safety sentence) — verbatim, do not paraphrase.
+const DISCLAIMER =
+  "Zero Light provides planning guidance only. Its ratings and forecasts are generated from " +
+  "third-party data that may be incomplete, delayed, or wrong, and conditions in the field or " +
+  "on the water can change quickly. Ratings estimate fish and game activity only — they do " +
+  "not guarantee activity, success, or safe conditions. Always confirm seasons, bag and " +
+  "creel limits, licensing, closures, and local conditions with official sources — your " +
+  "state fish and wildlife agency, NOAA, and local authorities — before hunting or fishing. " +
+  "You are responsible for complying with all applicable laws and regulations, and for your " +
+  "own safety.";
+
+function aboutHtml(version: string): string {
+  const link = (href: string, name: string, what: string) =>
+    `<li><a href="${href}" target="_blank" rel="noopener">${name}</a> — ${what}</li>`;
+  return `
+  <p><strong>Zero Light</strong> — best times to hunt and fish for a location.</p>
+  <p class="note">${esc(version)} · © Wade Feltman — All Rights Reserved.</p>
+  <h3>Data &amp; services</h3>
+  <ul class="credits">
+    ${link("https://open-meteo.com/", "Open-Meteo", "weather forecasts")}
+    ${link("https://www.usgs.gov/", "USGS", "stream gauge water temperature &amp; flow")}
+    ${link("https://tidesandcurrents.noaa.gov/", "NOAA CO-OPS", "tide predictions &amp; stations")}
+    ${link("https://www.ncei.noaa.gov/", "NOAA NCEI", "climate normals behind typical days")}
+    ${link("https://myfwc.com/research/redtide/", "FWC-FWRI", "red tide monitoring")}
+    ${link("https://www.geoapify.com/", "Geoapify", "place search &amp; geocoding")}
+    ${link("https://www.openstreetmap.org/copyright", "OpenStreetMap contributors", "map data")}
+    ${link("https://leafletjs.com/", "Leaflet", "map library")}
+    ${link("https://www.zippopotam.us/", "Zippopotam.us", "ZIP code lookups")}
+  </ul>
+  <p class="disclaimer">${esc(DISCLAIMER)}</p>`;
+}
+
+function closeInfoMenu(): void {
+  $("#info-menu").hidden = true;
+  $("#info-btn").setAttribute("aria-expanded", "false");
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
-  const locSel = $<HTMLSelectElement>("#location");
-  locSel.innerHTML = LOCATIONS.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
-  locSel.addEventListener("change", () => {
-    state.location = LOCATIONS.find((l) => l.id === locSel.value) ?? LOCATIONS[0];
-    $("#custom-coords").hidden = state.location.id !== "custom";
-    if (state.location.id === "custom") initMap();
-    state.weatherFor = "";
-    state.extrasFor = "";
-    rebuildTargets();
-    void ensureData();
-  });
+  // Restore the last selected location (device-only, item #17). A
+  // first run stays at the "enter a location" state — no default, no
+  // automatic geolocation prompt.
+  const last = loadLastPlace();
+  if (last) {
+    state.place = last;
+    $<HTMLInputElement>("#place-search").value = last.label;
+    setSearchStatus(`${last.label} — ${last.lat.toFixed(4)}, ${last.lon.toFixed(4)}`);
+  } else {
+    $<HTMLInputElement>("#place-search").focus();
+  }
 
   rebuildTargets();
   $<HTMLSelectElement>("#target").addEventListener("change", (e) => {
@@ -607,43 +924,26 @@ window.addEventListener("DOMContentLoaded", async () => {
     render();
   });
 
-  $("#custom-apply").addEventListener("click", () => {
-    const lat = parseFloat($<HTMLInputElement>("#custom-lat").value);
-    const lon = parseFloat($<HTMLInputElement>("#custom-lon").value);
-    if (Number.isFinite(lat) && Number.isFinite(lon)) setCustom(lat, lon, "");
-  });
-
-  $("#near-me").addEventListener("click", () => {
-    if (!("geolocation" in navigator)) {
-      $("#custom-label").textContent = "This device does not offer geolocation.";
-      return;
+  // Unified location input (item #17).
+  const searchInput = $<HTMLInputElement>("#place-search");
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void resolveSearch();
     }
-    $("#custom-label").textContent = "Locating…";
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setCustom(
-          pos.coords.latitude,
-          pos.coords.longitude,
-          `Near me (±${Math.round(pos.coords.accuracy)} m)`,
-        );
-      },
-      () => {
-        $("#custom-label").textContent = "Location permission was not granted — use the ZIP lookup or the map instead.";
-      },
-      { timeout: 15000 },
-    );
   });
-
-  $("#zip-go").addEventListener("click", async () => {
-    const zip = $<HTMLInputElement>("#zip").value.trim();
-    if (!/^\d{5}$/.test(zip)) {
-      $("#custom-label").textContent = "Enter a 5-digit US ZIP code.";
-      return;
-    }
-    const found = await lookupZip(zip);
-    if (found) setCustom(found.lat, found.lon, found.label);
-    else $("#custom-label").textContent = `No match found for ZIP ${zip}.`;
+  searchInput.addEventListener("input", () => hidePickList());
+  $("#geo-btn").addEventListener("click", () => locateMe());
+  $("#map-btn").addEventListener("click", () => {
+    hidePickList();
+    if (mapIsOpen) closeMapAll();
+    else openMap();
   });
+  $("#map-use").addEventListener("click", () => confirmMap());
+  $("#map-cancel").addEventListener("click", () => closeMapAll());
+  $("#map-use-modal").addEventListener("click", () => confirmMap());
+  $("#map-cancel-modal").addEventListener("click", () => closeMapAll());
+  $("#map-modal-close").addEventListener("click", () => closeMapAll());
 
   document.querySelectorAll("#day-picker .chip").forEach((b) =>
     b.addEventListener("click", () => {
@@ -668,9 +968,27 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   $("#refresh-btn").addEventListener("click", () => void ensureData(true));
 
-  // Header icons + modals.
+  // Header icons + modals. The ⓘ opens a small menu (item #18).
   $("#settings-btn").addEventListener("click", () => openModal("settings-modal"));
-  $("#info-btn").addEventListener("click", () => openModal("info-modal"));
+  $("#info-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const menu = $("#info-menu");
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    $("#info-btn").setAttribute("aria-expanded", String(willOpen));
+  });
+  $("#menu-how").addEventListener("click", () => {
+    closeInfoMenu();
+    openModal("info-modal");
+  });
+  $("#menu-about").addEventListener("click", () => {
+    closeInfoMenu();
+    openModal("about-modal");
+  });
+  document.addEventListener("click", (e) => {
+    const menu = $("#info-menu");
+    if (!menu.hidden && !menu.contains(e.target as Node)) closeInfoMenu();
+  });
   $("#info-content").innerHTML = INFO_HTML;
   document.querySelectorAll<HTMLElement>(".modal-close").forEach((b) =>
     b.addEventListener("click", () => {
@@ -679,39 +997,53 @@ window.addEventListener("DOMContentLoaded", async () => {
   );
   document.querySelectorAll<HTMLElement>(".modal-backdrop").forEach((bd) =>
     bd.addEventListener("click", (e) => {
-      if (e.target === bd) bd.hidden = true;
+      if (e.target !== bd) return;
+      // The map modal's backdrop click is a cancel (item #17): discard
+      // the working pin and close both views, like Esc.
+      if (bd.id === "map-modal") closeMapAll();
+      else bd.hidden = true;
     }),
   );
 
-  // Settings form.
+  // Escape layering: info menu → map (modal Esc cancels everything,
+  // decided 2026-11-12) → pick list.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (!$("#info-menu").hidden) {
+      closeInfoMenu();
+      return;
+    }
+    if (mapIsOpen) {
+      closeMapAll();
+      return;
+    }
+    hidePickList();
+  });
+
+  // Settings form — calendar export toggles only (item #20 removed
+  // the key and endpoint fields; keys live server-side now).
   const s = state.settings;
-  $<HTMLInputElement>("#usgs-key").value = s.usgs;
-  $<HTMLInputElement>("#ncei-token").value = s.ncei;
-  $<HTMLInputElement>("#cache-endpoint").value = s.cacheEndpoint;
   $<HTMLInputElement>("#export-typical").checked = s.includeTypical;
   $<HTMLInputElement>("#export-dontgo").checked = s.includeDontGo;
   $("#save-settings").addEventListener("click", () => {
     state.settings = {
-      usgs: $<HTMLInputElement>("#usgs-key").value.trim(),
-      ncei: $<HTMLInputElement>("#ncei-token").value.trim(),
-      cacheEndpoint: $<HTMLInputElement>("#cache-endpoint").value.trim(),
       includeTypical: $<HTMLInputElement>("#export-typical").checked,
       includeDontGo: $<HTMLInputElement>("#export-dontgo").checked,
     };
     saveSettings(state.settings);
     $("#settings-modal").hidden = true;
-    state.weatherFor = "";
-    state.extrasFor = "";
     $("#status").textContent = "Settings saved on this device.";
-    void ensureData();
   });
 
   // Rust app-info command (replaces the foundation's greet example).
+  let versionLabel = "Zero Light 0.3.0";
   try {
-    $("#app-info").textContent = ` · ${await invoke<string>("app_info")}`;
+    versionLabel = await invoke<string>("app_info");
+    $("#app-info").textContent = ` · ${versionLabel}`;
   } catch {
-    $("#app-info").textContent = " · Zero Light 0.2.0";
+    $("#app-info").textContent = ` · ${versionLabel}`;
   }
+  $("#about-content").innerHTML = aboutHtml(versionLabel);
 
   void ensureData();
 });
