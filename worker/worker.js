@@ -361,7 +361,7 @@ async function handleNormals(request, env, ctx, url) {
   const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
   const clat = parseFloat(cellLat);
   const clon = parseFloat(cellLon);
-  const key = `normals3:${cellLat}:${cellLon}`;
+  const key = `normals4:${cellLat}:${cellLon}`;
 
   return serveCached(env, ctx, key, NORMALS_TTL_SEC, 7 * 86400, async () => {
     const headers = { token: env.NCEI_CDO_TOKEN };
@@ -394,7 +394,10 @@ async function handleNormals(request, env, ctx, url) {
       for (const r of data.results) {
         if (r.datatype !== "DLY-TAVG-NORMAL") continue;
         const mmdd = String(r.date ?? "").slice(5, 10);
-        const v = typeof r.value === "number" ? r.value / 10 : NaN;
+        // With units=standard the CDO API returns whole degrees F
+        // (verified live 2026-11-12: Tampa 01-01 raw 61.5). The raw
+        // archive files are tenths of C; the API is not — do not /10.
+        const v = typeof r.value === "number" ? r.value : NaN;
         if (/^\d{2}-\d{2}$/.test(mmdd) && Number.isFinite(v)) out[mmdd] = v;
       }
       if (Object.keys(out).length) return JSON.stringify(out);
