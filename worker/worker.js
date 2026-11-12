@@ -361,11 +361,14 @@ async function handleNormals(request, env, ctx, url) {
   const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
   const clat = parseFloat(cellLat);
   const clon = parseFloat(cellLon);
-  const key = `normals2:${cellLat}:${cellLon}`;
+  const key = `normals3:${cellLat}:${cellLon}`;
 
   return serveCached(env, ctx, key, NORMALS_TTL_SEC, 7 * 86400, async () => {
     const headers = { token: env.NCEI_CDO_TOKEN };
-    const ext = `${clon - 0.6},${clat - 0.6},${clon + 0.6},${clat + 0.6}`;
+    // CDO extent order is lat,lon of the SW corner then lat,lon of the
+    // NE corner (NOAA API docs). The v0.2.0 code sent lon,lat, which
+    // put the box in the southern ocean and matched zero stations.
+    const ext = `${clat - 0.6},${clon - 0.6},${clat + 0.6},${clon + 0.6}`;
     const stRes = await fetch(
       `https://www.ncdc.noaa.gov/cdo-web/api/v2/stations?datasetid=NORMAL_DLY&extent=${ext}&limit=5`,
       { headers },
