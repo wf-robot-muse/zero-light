@@ -13,3 +13,4 @@ dist/
 
 # Smoke-test build output
 .smoke-build/
+next-build-changes.md
