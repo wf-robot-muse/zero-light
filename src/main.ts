@@ -31,9 +31,9 @@ import {
   type AppSettings,
   type ThemePref,
 } from "./config";
-// #29 logo masters (assets/logo/). The lockup ships in two colorways and
-// swaps with the theme; the square mark is the constant header brand.
-import brandMarkUrl from "../assets/logo/zero-light-mark.svg?url";
+// #29/#30 logo masters (assets/logo/). The full lockup ships in two
+// colorways and swaps with the theme; it is the header brand (#30) and
+// tops the About modal. The square mark remains the app icon / favicon.
 import lockupLightUrl from "../assets/logo/zero-light-lockup-on-light.svg?url";
 import lockupDarkUrl from "../assets/logo/zero-light-lockup-on-dark.svg?url";
 
@@ -1434,8 +1434,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   syncClearBtn();
 
-  // #29: header brand mark. #25: apply the (already validated) theme.
-  $<HTMLImageElement>("#brand-mark").src = brandMarkUrl;
+  // #30: header brand is the full lockup; CSS swaps the colorway with
+  // the theme. #25: apply the (already validated) theme.
+  $<HTMLImageElement>("#brand-lockup-light").src = lockupLightUrl;
+  $<HTMLImageElement>("#brand-lockup-dark").src = lockupDarkUrl;
   applyTheme();
 
   // #24: restore the last-used target; an id that no longer exists is
@@ -1623,7 +1625,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.0";
+  let versionLabel = "Zero Light 0.4.1";
   try {
     versionLabel = await invoke<string>("app_info");
   } catch {

@@ -1,5 +1,5 @@
-// UI regression check (next-build item #6; extended for v0.3.0 #17/#18/#20
-// and v0.4.0 #22–#29).
+// UI regression check (next-build item #6; extended for v0.3.0 #17/#18/#20,
+// v0.4.0 #22–#29, and v0.4.1 #30).
 //
 // The v0.1.0 startup bug passed the engine-only smoke test (24/24)
 // because nothing ever rendered the app. This check serves the built
@@ -212,22 +212,45 @@ try {
   check("no preset location dropdown remains", (await page.locator("#location").count()) === 0);
   check("unified search box exists", (await page.locator("#place-search").count()) === 1);
 
-  // #23 tagline, #29 header brand mark, #27 footer removal.
+  // #23 tagline, #30 header lockup, #27 footer removal.
   check(
     "tagline is the locked #23 text",
     (await page.textContent(".subtitle"))?.trim() === "Your best times to hunt and fish.",
   );
   check(
-    "header shows the #29 square mark",
+    "header shows the full lockup, both colorways wired (#30)",
     await page.evaluate(() => {
-      const img = document.querySelector("#brand-mark");
-      // The 1 KB master is inlined by Vite as a data URI; either form OK
-      // as long as the image actually loads.
-      return (
+      const loaded = (img) =>
         !!img &&
         (img.getAttribute("src") ?? "").length > 0 &&
         img.complete &&
-        img.naturalWidth > 0
+        img.naturalWidth > 0;
+      return (
+        loaded(document.querySelector("#brand-lockup-light")) &&
+        loaded(document.querySelector("#brand-lockup-dark")) &&
+        !document.querySelector("#brand-mark")
+      );
+    }),
+  );
+  check(
+    "tagline sits under the header lockup (#30)",
+    await page.evaluate(() => {
+      const img = document.querySelector("#brand-lockup-light");
+      const sub = document.querySelector(".brand .subtitle");
+      if (!img || !sub) return false;
+      return sub.getBoundingClientRect().top >= img.getBoundingClientRect().bottom - 1;
+    }),
+  );
+  check(
+    "light theme displays the light lockup colorway (#30)",
+    await page.evaluate(() => {
+      const light = document.querySelector("#brand-lockup-light");
+      const dark = document.querySelector("#brand-lockup-dark");
+      return (
+        !!light &&
+        !!dark &&
+        getComputedStyle(light).display !== "none" &&
+        getComputedStyle(dark).display === "none"
       );
     }),
   );
@@ -392,6 +415,19 @@ try {
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark", null, { timeout: 5000 });
   check("choosing Dark applies the dark theme", true);
   check(
+    "dark theme displays the dark lockup colorway (#30)",
+    await page.evaluate(() => {
+      const light = document.querySelector("#brand-lockup-light");
+      const dark = document.querySelector("#brand-lockup-dark");
+      return (
+        !!light &&
+        !!dark &&
+        getComputedStyle(dark).display !== "none" &&
+        getComputedStyle(light).display === "none"
+      );
+    }),
+  );
+  check(
     "theme persists to localStorage",
     (await page.evaluate(() => localStorage.getItem("zl_theme"))) === "dark",
   );
@@ -401,6 +437,19 @@ try {
   await page.click("#save-settings");
   await page.waitForFunction(() => document.documentElement.dataset.theme === "light", null, { timeout: 5000 });
   check("Follow device restores the device theme (light here)", true);
+  check(
+    "back in light, the header lockup swaps back (#30)",
+    await page.evaluate(() => {
+      const light = document.querySelector("#brand-lockup-light");
+      const dark = document.querySelector("#brand-lockup-dark");
+      return (
+        !!light &&
+        !!dark &&
+        getComputedStyle(light).display !== "none" &&
+        getComputedStyle(dark).display === "none"
+      );
+    }),
+  );
 
   // ⓘ menu (#18): How ratings work + About & credits.
   await page.click("#info-btn");
