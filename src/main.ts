@@ -1625,7 +1625,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.1";
+  let versionLabel = "Zero Light 0.4.2";
   try {
     versionLabel = await invoke<string>("app_info");
   } catch {

@@ -160,12 +160,15 @@ button:hover { border-color: var(--accent); }
 [hidden] { display: none !important; }
 
 /* ---- header / brand (#28, #29) ---- */
-.topbar { position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
-.brand { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; flex: 1 1 auto; min-width: 0; }
-/* #30: the header brand is the full lockup (1200x460) above the tagline;
-   the colorway swaps with the theme, same pattern as the About lockup.
-   max-width: 100% keeps it from ever crowding out the icon buttons. */
-.brand-lockup { width: 190px; max-width: 100%; height: auto; display: block; }
+.topbar { position: relative; display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.brand { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+/* #30/#32 (L2): the header is a stack at every width — the icon row on
+   its own row (right-aligned, see .icon-row), then the full lockup
+   (1200x460), then the tagline. Lockup width is fluid (100% of the
+   brand width) on phone and again in the desktop rail, with fixed
+   steps at the two middle tiers; the colorway swaps with the theme,
+   same pattern as the About lockup. */
+.brand-lockup { width: 100%; max-width: 100%; height: auto; display: block; }
 .brand-lockup-dark { display: none; }
 [data-theme="dark"] .brand-lockup-dark { display: block; }
 [data-theme="dark"] .brand-lockup-light { display: none; }
@@ -173,7 +176,7 @@ button:hover { border-color: var(--accent); }
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
-.icon-row { display: flex; gap: 2px; padding-top: 2px; }
+.icon-row { display: flex; gap: 2px; padding-top: 2px; align-self: flex-end; }
 .icon-btn {
   background: none; border: none; padding: 7px; cursor: pointer;
   color: var(--icon); border-radius: 8px; line-height: 0;
@@ -443,7 +446,7 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
 /* ---- responsive tiers (#28): 37.5em / 52.5em / 75em ---- */
 @media (min-width: 37.5em) {
   .container { max-width: 700px; }
-  .brand-lockup { width: 230px; }
+  .brand-lockup { width: 400px; }
   .slotgrid { grid-template-columns: 1fr 1fr; }
   .det2 { display: none; }
   .dettiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -455,7 +458,7 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
 
 @media (min-width: 52.5em) {
   .container { max-width: 860px; }
-  .brand-lockup { width: 260px; }
+  .brand-lockup { width: 440px; }
   .enrich { display: block; }
   .area-cards.enrich { display: grid; grid-template-columns: repeat(3, 1fr); }
   .dettiles { grid-template-columns: repeat(3, 1fr); }
@@ -466,7 +469,7 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
 }
 
 @media (min-width: 75em) {
-  .brand-lockup { width: 280px; }
+  .brand-lockup { width: 100%; }
   .container {
     max-width: 1200px;
     display: grid;

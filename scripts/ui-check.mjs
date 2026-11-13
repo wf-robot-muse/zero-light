@@ -1,5 +1,5 @@
 // UI regression check (next-build item #6; extended for v0.3.0 #17/#18/#20,
-// v0.4.0 #22–#29, and v0.4.1 #30).
+// v0.4.0 #22–#29, v0.4.1 #30, and v0.4.2 #32).
 //
 // The v0.1.0 startup bug passed the engine-only smoke test (24/24)
 // because nothing ever rendered the app. This check serves the built
@@ -519,6 +519,52 @@ try {
     (await page.inputValue("#place-search")).includes("Tampa"),
   );
   check("target restored to redfish (#24)", (await page.inputValue("#target")) === "redfish");
+
+  // #32 (L2 header): the icon row sits on its own row above the lockup,
+  // and the lockup width follows the tier rule — fluid (100% of the
+  // brand width) on phone, 400px at tablet width, 440px at Expanded,
+  // and 100% of the rail width again on desktop. Measured widths are
+  // logged for the record.
+  const lockupGeom = async (w) => {
+    await page.setViewportSize({ width: w, height: 850 });
+    await page.waitForTimeout(250);
+    return page.evaluate(() => {
+      const img = document.querySelector("#brand-lockup-light");
+      const brand = document.querySelector(".brand");
+      const row = document.querySelector(".icon-row");
+      if (!img || !brand || !row) return null;
+      const ir = img.getBoundingClientRect();
+      return {
+        lockup: ir.width,
+        lockupTop: ir.top,
+        brand: brand.getBoundingClientRect().width,
+        rowBottom: row.getBoundingClientRect().bottom,
+      };
+    });
+  };
+  const g390 = await lockupGeom(390);
+  console.log(`  #32 measured @390: lockup=${g390?.lockup.toFixed(1)} brand=${g390?.brand.toFixed(1)}`);
+  check(
+    "phone: lockup fills the content width (#32)",
+    !!g390 && Math.abs(g390.lockup - g390.brand) <= 2 && g390.brand > 300,
+  );
+  check(
+    "icon row sits above the lockup (#32)",
+    !!g390 && g390.rowBottom <= g390.lockupTop + 1,
+  );
+  const g820 = await lockupGeom(820);
+  console.log(`  #32 measured @820: lockup=${g820?.lockup.toFixed(1)}`);
+  check("tablet: lockup is 400px (#32)", !!g820 && Math.abs(g820.lockup - 400) <= 2);
+  const g1024 = await lockupGeom(1024);
+  console.log(`  #32 measured @1024: lockup=${g1024?.lockup.toFixed(1)}`);
+  check("expanded: lockup is 440px (#32)", !!g1024 && Math.abs(g1024.lockup - 440) <= 2);
+  const g1440 = await lockupGeom(1440);
+  console.log(`  #32 measured @1440: lockup=${g1440?.lockup.toFixed(1)} brand=${g1440?.brand.toFixed(1)}`);
+  check(
+    "desktop: lockup fills the rail width (#32)",
+    !!g1440 && Math.abs(g1440.lockup - g1440.brand) <= 2 && g1440.brand > 300,
+  );
+  await page.setViewportSize({ width: 1000, height: 850 });
 } catch (err) {
   console.log("ERROR", err.message);
   failures.push("exception: " + err.message);
