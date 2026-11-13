@@ -3,116 +3,169 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Zero Light — best times to hunt and fish</title>
+    <link rel="icon" href="./favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <!-- #25: resolve the theme before first paint (stored pref wins;
+         "device"/unset follows prefers-color-scheme). main.ts re-applies
+         the validated setting on load and tracks live flips. -->
+    <script>
+      try {
+        var zlTheme = localStorage.getItem("zl_theme");
+        var zlDark =
+          zlTheme === "dark" ||
+          (zlTheme !== "light" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = zlDark ? "dark" : "light";
+      } catch (e) {
+        document.documentElement.dataset.theme = "light";
+      }
+    </script>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
     <main class="container">
-      <header class="topbar">
-        <div>
-          <h1>Zero Light</h1>
-          <p class="subtitle">Best times to hunt and fish for a location — a few labelled slots, one reason each.</p>
-        </div>
-        <div class="icon-row">
-          <button id="settings-btn" class="icon-btn" type="button" title="Settings" aria-label="Settings">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="3.2"></circle>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-            </svg>
-          </button>
-          <button id="info-btn" class="icon-btn" type="button" title="Information" aria-label="Information" aria-haspopup="menu" aria-expanded="false">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="9.2"></circle>
-              <line x1="12" y1="11" x2="12" y2="16"></line>
-              <line x1="12" y1="7.6" x2="12.01" y2="7.6"></line>
-            </svg>
-          </button>
-        </div>
-        <div id="info-menu" class="info-menu" role="menu" hidden>
-          <button type="button" role="menuitem" id="menu-how">How ratings work</button>
-          <button type="button" role="menuitem" id="menu-about">About &amp; credits</button>
-        </div>
-      </header>
-
-      <section class="card controls">
-        <div class="field location-field">
-          <label for="place-search">Location</label>
-          <div class="search-box">
-            <input id="place-search" type="text" placeholder="City, lake, ZIP, or lat, lon" autocomplete="off" maxlength="80" enterkeyhint="search" />
-            <button id="map-btn" class="box-btn" type="button" title="Pick on map" aria-label="Pick on map">
-              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M9 4 3.5 5.8v13.4L9 17.4l6 1.8 5.5-1.8V4L15 5.8 9 4z"></path>
-                <path d="M9 4v13.4"></path>
-                <path d="M15 5.8v13.4"></path>
-              </svg>
-            </button>
-            <span class="box-sep" aria-hidden="true"></span>
-            <button id="geo-btn" class="box-btn" type="button" title="Use my location" aria-label="Use my location">
-              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="6.5"></circle>
-                <line x1="12" y1="2.5" x2="12" y2="5.5"></line>
-                <line x1="12" y1="18.5" x2="12" y2="21.5"></line>
-                <line x1="2.5" y1="12" x2="5.5" y2="12"></line>
-                <line x1="18.5" y1="12" x2="21.5" y2="12"></line>
-                <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle>
-              </svg>
-            </button>
-          </div>
-          <p class="note" id="search-status">Type a place name, ZIP code, or coordinates, then press Enter — or pick on the map.</p>
-          <ul id="pick-list" class="pick-list" hidden></ul>
-          <div id="map-panel" hidden>
-            <div id="map"></div>
-            <p class="note" id="map-readout"></p>
-            <div class="row">
-              <button id="map-use" type="button">Use this spot</button>
-              <button id="map-cancel" type="button">Cancel</button>
+      <div class="side-col">
+        <header class="topbar">
+          <div class="brand">
+            <img id="brand-mark" alt="" width="34" height="34" />
+            <div>
+              <h1>Zero Light</h1>
+              <p class="subtitle">Your best times to hunt and fish.</p>
             </div>
           </div>
-          <p class="note credit-line">Place search <a href="https://www.geoapify.com/" target="_blank" rel="noopener">powered by Geoapify</a></p>
-        </div>
-        <div class="field">
-          <label for="target">Target</label>
-          <select id="target"></select>
-        </div>
-        <div class="field">
-          <label>Day</label>
-          <div class="row" id="day-picker">
-            <button type="button" data-offset="0" class="chip selected">Today</button>
-            <button type="button" data-offset="1" class="chip">Tomorrow</button>
-            <button type="button" data-offset="2" class="chip">Day after</button>
+          <div class="icon-row">
+            <button id="print-btn" class="icon-btn" type="button" title="Print" aria-label="Print" aria-haspopup="menu" aria-expanded="false">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M7 8V3.5h10V8"></path>
+                <rect x="4" y="8" width="16" height="8" rx="2"></rect>
+                <path d="M7 13h10v7.5H7z"></path>
+              </svg>
+            </button>
+            <button id="settings-btn" class="icon-btn" type="button" title="Settings" aria-label="Settings">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3.2"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </button>
+            <button id="info-btn" class="icon-btn" type="button" title="Information" aria-label="Information" aria-haspopup="menu" aria-expanded="false">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9.2"></circle>
+                <line x1="12" y1="11" x2="12" y2="16"></line>
+                <line x1="12" y1="7.6" x2="12.01" y2="7.6"></line>
+              </svg>
+            </button>
+          </div>
+          <div id="info-menu" class="info-menu" role="menu" hidden>
+            <button type="button" role="menuitem" id="menu-how">How ratings work</button>
+            <button type="button" role="menuitem" id="menu-about">About &amp; credits</button>
+          </div>
+          <div id="print-menu" class="info-menu print-menu" role="menu" hidden>
+            <button type="button" role="menuitem" id="print-day">Print day</button>
+            <button type="button" role="menuitem" id="print-week">Print week</button>
+            <button type="button" role="menuitem" id="print-month">Print month</button>
+          </div>
+        </header>
+
+        <section class="card controls">
+          <div class="field location-field">
+            <label for="place-search">Location</label>
+            <div class="search-box">
+              <input id="place-search" type="text" placeholder="City, lake, ZIP, or lat, lon" autocomplete="off" maxlength="80" enterkeyhint="search" />
+              <button id="clear-btn" class="box-btn clear-btn" type="button" title="Clear" aria-label="Clear search" tabindex="-1">
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                  <line x1="5" y1="5" x2="19" y2="19"></line>
+                  <line x1="19" y1="5" x2="5" y2="19"></line>
+                </svg>
+              </button>
+              <button id="map-btn" class="box-btn" type="button" title="Pick on map" aria-label="Pick on map">
+                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M9 4 3.5 5.8v13.4L9 17.4l6 1.8 5.5-1.8V4L15 5.8 9 4z"></path>
+                  <path d="M9 4v13.4"></path>
+                  <path d="M15 5.8v13.4"></path>
+                </svg>
+              </button>
+              <span class="box-sep" aria-hidden="true"></span>
+              <button id="geo-btn" class="box-btn" type="button" title="Use my location" aria-label="Use my location">
+                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="6.5"></circle>
+                  <line x1="12" y1="2.5" x2="12" y2="5.5"></line>
+                  <line x1="12" y1="18.5" x2="12" y2="21.5"></line>
+                  <line x1="2.5" y1="12" x2="5.5" y2="12"></line>
+                  <line x1="18.5" y1="12" x2="21.5" y2="12"></line>
+                  <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle>
+                </svg>
+              </button>
+            </div>
+            <p class="note" id="search-status"></p>
+            <ul id="pick-list" class="pick-list" hidden></ul>
+            <div id="map-panel" hidden>
+              <div id="map"></div>
+              <p class="note" id="map-readout"></p>
+              <div class="row">
+                <button id="map-use" type="button">Use this spot</button>
+                <button id="map-cancel" type="button">Cancel</button>
+              </div>
+            </div>
+            <p class="note credit-line">Place search <a href="https://www.geoapify.com/" target="_blank" rel="noopener">powered by Geoapify</a></p>
+          </div>
+        </section>
+
+        <div class="chips-block">
+          <div class="field">
+            <label for="target">Target</label>
+            <select id="target" class="target-select"></select>
+          </div>
+          <div class="field">
+            <label>Day</label>
+            <div class="row" id="day-picker">
+              <button type="button" data-offset="0" class="chip selected">Today</button>
+              <button type="button" data-offset="1" class="chip">Tomorrow</button>
+              <button type="button" data-offset="2" class="chip">Day after</button>
+            </div>
           </div>
         </div>
-        <div class="field">
-          <label>View</label>
-          <div class="row" id="view-picker">
+
+        <div class="views-block">
+          <div class="row views-toggle" id="view-picker" role="tablist" aria-label="View">
             <button type="button" data-view="planner" class="chip selected">Planner</button>
             <button type="button" data-view="trends" class="chip">Trends</button>
           </div>
         </div>
-      </section>
 
-      <p class="status-row">
-        <span id="status" class="status"></span>
-        <span id="updated-note" class="note"></span>
-        <button id="refresh-btn" type="button" class="small-btn">Refresh data</button>
-      </p>
-      <section id="planner"></section>
-      <section id="trends" hidden></section>
+        <div id="plan-side"></div>
+      </div>
 
-      <footer class="note">
-        Scoring follows the evidence: dawn/dusk, season, temperature and moving
-        water carry the score. Solunar is a tie-breaker only in saltwater;
-        moon phase and solar activity score zero.
-        <span id="app-info"></span>
-      </footer>
+      <div class="main-col">
+        <p class="status-row">
+          <span id="status" class="status"></span>
+          <span id="updated-note" class="note"></span>
+          <button id="refresh-btn" type="button" class="small-btn">Refresh data</button>
+        </p>
+        <section id="planner"></section>
+        <section id="trends" hidden></section>
+        <div id="plan-cards"></div>
+      </div>
     </main>
 
-    <!-- Settings modal (item #12; keys/endpoint removed in v0.3.0, item #20) -->
+    <!-- #26: print sheets are rendered here from the same plan data -->
+    <div id="print-root" aria-hidden="true"></div>
+
+    <!-- Settings modal (item #12; keys/endpoint removed in v0.3.0, item #20; theme added in #25) -->
     <div id="settings-modal" class="modal-backdrop" hidden>
       <div class="modal-card" role="dialog" aria-label="Settings">
         <div class="modal-head">
           <h2>Settings</h2>
           <button type="button" class="icon-btn modal-close" data-close="settings-modal" title="Close" aria-label="Close">✕</button>
+        </div>
+        <h3>Theme</h3>
+        <div class="row" id="theme-picker" role="radiogroup" aria-label="Theme">
+          <button type="button" data-theme-pref="device" class="chip">Follow device</button>
+          <button type="button" data-theme-pref="light" class="chip">Light</button>
+          <button type="button" data-theme-pref="dark" class="chip">Dark</button>
         </div>
         <h3>Calendar export</h3>
         <label class="check"><input id="export-typical" type="checkbox" /> Include typical days (beyond the forecast)</label>
@@ -134,7 +187,7 @@
       </div>
     </div>
 
-    <!-- Day detail modal (item #11) -->
+    <!-- Day detail modal (item #11; at desktop widths Trends uses a side panel instead, #28) -->
     <div id="day-modal" class="modal-backdrop" hidden>
       <div class="modal-card" role="dialog" aria-label="Day detail">
         <div class="modal-head">
@@ -145,7 +198,7 @@
       </div>
     </div>
 
-    <!-- About & credits modal (item #18) -->
+    <!-- About & credits modal (item #18; lockup added in #29) -->
     <div id="about-modal" class="modal-backdrop" hidden>
       <div class="modal-card" role="dialog" aria-label="About and credits">
         <div class="modal-head">

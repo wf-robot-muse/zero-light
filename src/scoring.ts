@@ -34,26 +34,31 @@ export interface TargetDef {
   primeMaxF: number;
   /** Light-anchor strength 25-40. */
   lightAnchor: number;
-  /** Nocturnal targets (catfish) peak at night instead of dawn/dusk. */
+  /** Nocturnal targets peak at night instead of dawn/dusk. */
   nocturnal?: boolean;
   /** How hard rain hurts this target (0-1 multiplier on rain penalties). */
   rainSensitivity: number;
 }
 
+// #24: alphabetical 11. Catfish and Crappie removed; Largemouth Bass is the
+// only freshwater target. The four added saltwater species (Cobia, Flounder,
+// Grouper, Snapper) use web-checked season/temperature parameters and inherit
+// tide scoring + the red-tide veto from the saltwater path.
 export const TARGETS: TargetDef[] = [
   // Saltwater (FWC/USFWS temperature bands; v1 uses air temp as a water proxy)
-  { id: "snook", name: "Snook", kind: "saltwater", peakMonths: [3, 4, 5, 6, 7, 8, 9], shoulderMonths: [2, 10], primeMinF: 72, primeMaxF: 86, lightAnchor: 34, rainSensitivity: 0.5 },
-  { id: "redfish", name: "Redfish", kind: "saltwater", peakMonths: [8, 9, 10, 3, 4], shoulderMonths: [1, 2, 5, 7, 11], primeMinF: 65, primeMaxF: 82, lightAnchor: 34, rainSensitivity: 0.5 },
-  { id: "speckled-trout", name: "Speckled Trout", kind: "saltwater", peakMonths: [3, 4, 9, 10], shoulderMonths: [1, 2, 5, 8, 11], primeMinF: 65, primeMaxF: 80, lightAnchor: 36, rainSensitivity: 0.5 },
-  // Freshwater (FWC/USFWS table: bass spawn 62-75, crappie spawn 62-65,
-  // channel catfish spawn 72-82 / feed 70-85)
+  { id: "cobia", name: "Cobia", kind: "saltwater", peakMonths: [3, 4, 5], shoulderMonths: [2, 9], primeMinF: 70, primeMaxF: 84, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "flounder", name: "Flounder", kind: "saltwater", peakMonths: [9, 10], shoulderMonths: [8, 2, 3, 4], primeMinF: 62, primeMaxF: 78, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "grouper", name: "Grouper", kind: "saltwater", peakMonths: [9, 10], shoulderMonths: [2, 3, 8], primeMinF: 66, primeMaxF: 80, lightAnchor: 34, rainSensitivity: 0.5 },
+  // Freshwater (FWC/USFWS table: bass spawn 62-75)
   { id: "largemouth-bass", name: "Largemouth Bass", kind: "freshwater", peakMonths: [2, 3, 4, 9, 10], shoulderMonths: [1, 5, 8, 11], primeMinF: 62, primeMaxF: 78, lightAnchor: 34, rainSensitivity: 0.6 },
-  { id: "crappie", name: "Crappie", kind: "freshwater", peakMonths: [1, 2, 3, 10, 11], shoulderMonths: [0, 4, 9], primeMinF: 58, primeMaxF: 68, lightAnchor: 32, rainSensitivity: 0.6 },
-  { id: "catfish", name: "Catfish", kind: "freshwater", peakMonths: [4, 5, 6, 7, 8], shoulderMonths: [3, 9], primeMinF: 70, primeMaxF: 85, lightAnchor: 30, nocturnal: true, rainSensitivity: 0.3 },
+  { id: "redfish", name: "Redfish", kind: "saltwater", peakMonths: [8, 9, 10, 3, 4], shoulderMonths: [1, 2, 5, 7, 11], primeMinF: 65, primeMaxF: 82, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "snapper", name: "Snapper", kind: "saltwater", peakMonths: [5, 6], shoulderMonths: [4, 7], primeMinF: 70, primeMaxF: 86, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "snook", name: "Snook", kind: "saltwater", peakMonths: [3, 4, 5, 6, 7, 8, 9], shoulderMonths: [2, 10], primeMinF: 72, primeMaxF: 86, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "speckled-trout", name: "Speckled Trout", kind: "saltwater", peakMonths: [3, 4, 9, 10], shoulderMonths: [1, 2, 5, 8, 11], primeMinF: 65, primeMaxF: 80, lightAnchor: 36, rainSensitivity: 0.5 },
   // Hunting (season windows are generic v1 approximations — see README)
-  { id: "whitetail", name: "Whitetail Deer", kind: "hunting", peakMonths: [10, 11, 0], shoulderMonths: [9], primeMinF: 32, primeMaxF: 58, lightAnchor: 38, rainSensitivity: 0.8 },
-  { id: "waterfowl", name: "Waterfowl", kind: "hunting", peakMonths: [11, 0, 10], shoulderMonths: [9], primeMinF: 25, primeMaxF: 50, lightAnchor: 36, rainSensitivity: 0.4 },
   { id: "turkey", name: "Turkey", kind: "hunting", peakMonths: [2, 3, 4], shoulderMonths: [1, 5], primeMinF: 45, primeMaxF: 70, lightAnchor: 36, rainSensitivity: 1.0 },
+  { id: "waterfowl", name: "Waterfowl", kind: "hunting", peakMonths: [11, 0, 10], shoulderMonths: [9], primeMinF: 25, primeMaxF: 50, lightAnchor: 36, rainSensitivity: 0.4 },
+  { id: "whitetail", name: "Whitetail Deer", kind: "hunting", peakMonths: [10, 11, 0], shoulderMonths: [9], primeMinF: 32, primeMaxF: 58, lightAnchor: 38, rainSensitivity: 0.8 },
 ];
 
 export function targetById(id: string): TargetDef {
@@ -121,6 +126,10 @@ export interface DayPlan {
   astro: Astro;
   typical: boolean;
   solunarMajor: { start: Date; end: Date };
+  /** Per-hour scores exactly as computed for slot building (additive exposure
+   *  for the #28 hour-by-hour strip; no scoring change). Empty on veto days
+   *  is NOT implied — hours are still listed; display code decides. */
+  hourlyScores: { time: Date; score: number }[];
 }
 
 export function labelForScore(score: number): "Best" | "Good" | "Okay" | null {
@@ -566,6 +575,7 @@ export function generateDayPlan(input: DayInputs): DayPlan {
     astro,
     typical,
     solunarMajor: major,
+    hourlyScores: scored.map((s) => ({ time: s.time, score: s.score })),
   };
 }
 

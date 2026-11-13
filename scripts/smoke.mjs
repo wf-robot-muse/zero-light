@@ -157,7 +157,7 @@ const typicalPlan = S.generateDayPlan({
   date: new Date(2027, 0, 15),
   lat: 34.4207,
   lon: -86.3947,
-  target: S.targetById("crappie"),
+  target: S.targetById("largemouth-bass"),
   hours: [],
 });
 check("typical day is flagged typical", typicalPlan.typical === true);

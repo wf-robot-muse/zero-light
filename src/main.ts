@@ -6,6 +6,7 @@ import {
   TARGETS,
   generateDayPlan,
   dayBand,
+  pressureTrendPer6h,
   type DayPlan,
   type TargetDef,
   type Tides,
@@ -24,9 +25,44 @@ import {
   saveSettings,
   loadLastPlace,
   saveLastPlace,
+  loadLastTargetId,
+  saveLastTargetId,
   CACHE_ENDPOINT,
   type AppSettings,
+  type ThemePref,
 } from "./config";
+// #29 logo masters (assets/logo/). The lockup ships in two colorways and
+// swaps with the theme; the square mark is the constant header brand.
+import brandMarkUrl from "../assets/logo/zero-light-mark.svg?url";
+import lockupLightUrl from "../assets/logo/zero-light-lockup-on-light.svg?url";
+import lockupDarkUrl from "../assets/logo/zero-light-lockup-on-dark.svg?url";
+
+// #28 hero stencils: engraved prey art, one webp per target. The glob makes
+// any missing file degrade gracefully (that target's hero shows no ghost).
+const STENCIL_BY_TARGET: Record<string, string> = {
+  redfish: "redfish",
+  whitetail: "whitetail",
+  turkey: "turkey",
+  waterfowl: "mallard",
+  "largemouth-bass": "bass",
+  cobia: "cobia",
+  flounder: "flounder",
+  grouper: "grouper",
+  snapper: "snapper",
+  snook: "snook",
+  "speckled-trout": "trout",
+};
+const stencilModules = import.meta.glob("./assets/stencils/stencil-*.webp", {
+  eager: true,
+  query: "?url",
+  import: "default",
+}) as Record<string, string>;
+
+function stencilFor(targetId: string): string {
+  const name = STENCIL_BY_TARGET[targetId];
+  if (!name) return "";
+  return stencilModules[`./assets/stencils/stencil-${name}.webp`] ?? "";
+}
 import {
   fetchUsgsReading,
   fetchHabVeto,
@@ -52,7 +88,10 @@ export interface Place {
 
 const state = {
   place: null as Place | null,
-  targetId: "redfish",
+  // #24: nullable — null means the "Choose a target…" placeholder is in
+  // effect and nothing computes. Restored from the persisted last target
+  // at startup (validated against TARGETS there).
+  targetId: null as string | null,
   dayOffset: 0,
   view: "planner" as "planner" | "trends",
   settings: loadSettings(),
@@ -81,8 +120,10 @@ function locationShortName(): string {
   return state.place?.label || "No location selected";
 }
 
-function currentTarget(): TargetDef {
-  return TARGETS.find((t) => t.id === state.targetId) ?? TARGETS[0];
+function currentTarget(): TargetDef | null {
+  // #24: an unset or no-longer-valid id yields null (the placeholder),
+  // never a silent fallback to the first target.
+  return TARGETS.find((t) => t.id === state.targetId) ?? null;
 }
 
 /** The location-local "today" as a date key: the first forecast day when
@@ -99,9 +140,27 @@ function startKey(): string {
 function fmtTime(d: Date): string {
   let h = d.getHours();
   const m = d.getMinutes();
-  const ampm = h >= 12 ? "pm" : "am";
+  const ampm = h >= 12 ? "PM" : "AM";
   h = h % 12 || 12;
   return m ? `${h}:${String(m).padStart(2, "0")} ${ampm}` : `${h} ${ampm}`;
+}
+
+/** Mockup-style range: a shared AM/PM suffix when both ends share one
+ *  ("5:58 – 8:58 AM"), full times otherwise. */
+function fmtRange(a: Date, b: Date): string {
+  const sfx = (d: Date) => (d.getHours() >= 12 ? "PM" : "AM");
+  if (sfx(a) === sfx(b)) return `${fmtTime(a).replace(/ (AM|PM)$/, "")} – ${fmtTime(b)}`;
+  return `${fmtTime(a)} – ${fmtTime(b)}`;
+}
+
+/** Rating-band key for a plan: drives hero color, spine color, band words. */
+function bandKey(plan: DayPlan): "excellent" | "good" | "fair" | "poor" | "dontgo" {
+  if (plan.veto) return "dontgo";
+  return plan.verdict.toLowerCase() as "excellent" | "good" | "fair" | "poor";
+}
+
+function bandWord(plan: DayPlan): string {
+  return plan.veto ? "Don't go" : plan.verdict;
 }
 
 function fmtDay(key: string): string {
@@ -193,6 +252,8 @@ function planForKey(key: string): DayPlan {
   const hit = state.plansCache.get(cacheKey);
   if (hit) return hit;
   const target = currentTarget();
+  // Callers (render/print/export) gate on a chosen target first (#24).
+  if (!target) throw new Error("planForKey called with no target chosen");
   const { lat, lon } = currentLatLon();
   const date = parseDateKey(key);
   const hours = state.weather?.days.get(key) ?? [];
@@ -219,7 +280,7 @@ function exportDayFor(key: string): ExportDay {
   return {
     plan: planForKey(key),
     date: parseDateKey(key),
-    targetName: currentTarget().name,
+    targetName: currentTarget()?.name ?? "",
     locationName: locationShortName(),
   };
 }
@@ -239,22 +300,209 @@ function slotAddLinks(day: ExportDay, slotIdx: number): string {
     <a href="${outlookUrl(day, slot)}" target="_blank" rel="noopener">Outlook</a></span>`;
 }
 
+// ------------------------------------------------------------- planner (#28)
+// C2 Band Hero reskin: rating-color hero (in #plan-side) + slot cards,
+// enrichment and day details (in #planner) + area cards (in #plan-cards).
+// Presentation only — every figure comes from the same plan data as before.
+
+const PROHIBIT_SVG = `<svg class="hero-prohibit" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="33" fill="none" stroke="#fff" stroke-width="9"/><line x1="27" y1="73" x2="73" y2="27" stroke="#fff" stroke-width="9"/></svg>`;
+
+function heroHtml(plan: DayPlan, key: string, target: TargetDef): string {
+  const band = bandKey(plan);
+  const stencil = plan.veto ? "" : stencilFor(target.id);
+  const pill = plan.veto
+    ? `<span class="hero-pill">⦻ ${esc(plan.veto)}</span>`
+    : plan.slots.length
+      ? `<span class="hero-pill">${plan.slots[0].labelSymbol} Best window ${fmtRange(plan.slots[0].start, plan.slots[0].end)}</span>`
+      : `<span class="hero-pill">No window rated Okay or better</span>`;
+  return `
+  <section class="hero hero-${band}">
+    ${plan.veto ? PROHIBIT_SVG : stencil ? `<img class="hero-stencil" data-stencil="${esc(STENCIL_BY_TARGET[target.id] ?? "")}" src="${stencil}" alt="" aria-hidden="true" />` : ""}
+    <div class="hero-main">
+      <div class="hero-band">${esc(bandWord(plan))}</div>
+      <div class="hero-when">${esc(fmtDay(key))} · ${esc(locationShortName())}</div>
+      ${pill}
+    </div>
+    <div class="hero-sun">Sunrise ${fmtTime(plan.astro.sunrise)} · Sunset ${fmtTime(plan.astro.sunset)}</div>
+  </section>`;
+}
+
+function slotCardHtml(day: ExportDay, plan: DayPlan): string {
+  if (!plan.slots.length)
+    return `<p class="note">No window reached the Okay level today. Rest of the day: slow.</p>`;
+  const cards = plan.slots
+    .map(
+      (s, i) => `
+    <div class="slot2 spine-${s.label.toLowerCase()}">
+      <div class="slot2-top">
+        <span class="slot2-label lbl-${s.label.toLowerCase()}">${s.labelSymbol} ${s.bestToday ? "Best today" : s.label}</span>
+        <span class="slot2-time">${fmtRange(s.start, s.end)}</span>
+      </div>
+      <div class="slot2-reason">${esc(s.reason)}</div>
+      ${slotAddLinks(day, i)}
+    </div>`,
+    )
+    .join("");
+  return `<div class="slotgrid">${cards}</div><p class="note">Rest of the day: slow.</p>`;
+}
+
+function hourlyHtml(plan: DayPlan): string {
+  if (!plan.hourlyScores.length) return "";
+  const inSlot = (t: Date) => plan.slots.some((s) => t >= s.start && t < s.end);
+  const bars = plan.hourlyScores
+    .map((h) => {
+      const cls = inSlot(h.time) && h.score >= 75 ? "bar best" : h.score >= 45 ? "bar mid" : "bar";
+      return `<div class="${cls}" style="height:${Math.round(14 + (h.score / 100) * 52)}px" title="${fmtTime(h.time)} — score ${h.score}"></div>`;
+    })
+    .join("");
+  return `
+  <section class="enrich hourly-sec">
+    <h3>Hour by hour</h3>
+    <div class="hourly"><div class="bars">${bars}</div>
+    <div class="hours"><span>12a</span><span>6a</span><span>12p</span><span>6p</span><span>11p</span></div></div>
+  </section>`;
+}
+
+function weekGlanceHtml(): string {
+  const start = startKey();
+  const cells: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const key = addDaysKey(start, i);
+    const plan = planForKey(key);
+    const date = parseDateKey(key);
+    const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+    cells.push(`
+    <button type="button" class="wk-day wk-${bandKey(plan)}" data-offset="${i}">
+      <span class="wk-dow">${date.toLocaleDateString(undefined, { weekday: "short" })}</span>
+      <span class="wk-num">${date.getDate()}</span>
+      <span class="wk-band">${esc(bandWord(plan))}</span>
+      <span class="wk-best">${esc(best)}</span>
+    </button>`);
+  }
+  return `
+  <section class="enrich week-sec">
+    <h3>Week at a glance</h3>
+    <div class="week">${cells.join("")}</div>
+  </section>`;
+}
+
+/** Day-detail items shared by the list (phone) and tiles (wider) layouts. */
+function detailItems(plan: DayPlan, key: string, target: TargetDef): { label: string; value: string }[] {
+  const hours = state.weather?.days.get(key) ?? [];
+  const items: { label: string; value: string }[] = [
+    { label: "Sunrise", value: fmtTime(plan.astro.sunrise) },
+    { label: "Sunset", value: fmtTime(plan.astro.sunset) },
+  ];
+  if (hours.length) {
+    items.push({
+      label: "High / Low",
+      value: `${Math.round(Math.max(...hours.map((h) => h.tempF)))}° / ${Math.round(Math.min(...hours.map((h) => h.tempF)))}°`,
+    });
+    items.push({ label: "Wind", value: `to ${Math.round(Math.max(...hours.map((h) => h.windMph)))} mph` });
+    items.push({ label: "Rain chance", value: `to ${Math.round(Math.max(...hours.map((h) => h.precipProb)))}%` });
+    const trend = pressureTrendPer6h(hours);
+    const inHg = hours[hours.length - 1].pressureHpa * 0.02953;
+    const arrow = trend > 0.5 ? "↑ rising" : trend < -0.5 ? "↓ falling" : "→ steady";
+    items.push({ label: "Pressure", value: `${inHg.toFixed(2)} inHg ${arrow}` });
+    const typical = state.normals?.get(key.slice(5));
+    if (typical !== undefined) {
+      const mean = hours.reduce((a, h) => a + h.tempF, 0) / hours.length;
+      const delta = Math.round(mean - typical);
+      items.push({
+        label: "Typical for this date",
+        value: `${Math.round(typical)}° avg — today ${delta === 0 ? "about typical" : delta > 0 ? `${delta}° warmer` : `${-delta}° cooler`}`,
+      });
+    }
+  }
+  if (state.usgs?.waterTempF !== undefined && key === startKey() && target.kind !== "hunting") {
+    items.push({ label: "Water temp (USGS)", value: `${Math.round(state.usgs.waterTempF)}°F` });
+  }
+  const tides = tidesForDay(state.tides, parseDateKey(key));
+  if (tides?.events.length) {
+    items.push({
+      label: "Tides",
+      value: tides.events.map((e) => `${e.type} ${fmtTime(e.time)}`).join(" · "),
+    });
+  }
+  items.push({ label: "Moon", value: `${Math.round(plan.astro.moonIllumination * 100)}% lit` });
+  return items;
+}
+
+function areaCardsHtml(selectedKey: string): string {
+  const target = currentTarget();
+  if (!target || !state.place) return "";
+  const rows: string[] = [];
+  for (let i = 1; i <= 3; i++) {
+    const key = addDaysKey(startKey(), i);
+    const plan = planForKey(key);
+    const date = parseDateKey(key);
+    rows.push(
+      `<div class="uprow"><span class="dotb dot-${bandKey(plan)}"></span><span>${date.toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}</span><span class="upband">${esc(bandWord(plan))}</span></div>`,
+    );
+  }
+  const gauge = state.usgs
+    ? `<div class="acard-v">${state.usgs.waterTempF !== undefined ? `${Math.round(state.usgs.waterTempF)}°F` : "—"}</div>
+       <div class="acard-s">${esc(state.usgs.stationName)}${state.usgs.dischargeCfs !== undefined ? ` · flow ${Math.round(state.usgs.dischargeCfs)} cfs` : ""}${state.usgs.observedAt ? ` · ${esc(state.usgs.observedAt)}` : ""}</div>`
+    : `<div class="acard-s">No USGS gauge reporting near this location.</div>`;
+  const { lat, lon } = currentLatLon();
+  const inFlorida = lat >= 24 && lat <= 31.5 && lon >= -88.5 && lon <= -79.5;
+  const tide = state.habVeto
+    ? `<div class="acard-s acard-alert">${esc(state.habVeto)}</div>`
+    : inFlorida
+      ? `<div class="acard-s">No red tide detected near this location in the latest FWC-FWRI samples.</div>`
+      : `<div class="acard-s">Red tide monitoring covers Florida coastal waters (FWC-FWRI).</div>`;
+  void selectedKey;
+  return `
+  <div class="area-cards enrich">
+    <div class="acard"><h4>Coming up</h4>${rows.join("")}</div>
+    <div class="acard"><h4>Nearest gauge</h4>${gauge}</div>
+    <div class="acard"><h4>Red tide</h4>${tide}</div>
+  </div>`;
+}
+
+function jumpToDay(offset: number): void {
+  state.dayOffset = offset;
+  state.view = "planner";
+  document.querySelectorAll("#view-picker .chip").forEach((x) =>
+    x.classList.toggle("selected", (x as HTMLElement).dataset.view === "planner"),
+  );
+  document.querySelectorAll("#day-picker .chip").forEach((x) =>
+    x.classList.toggle("selected", parseInt((x as HTMLElement).dataset.offset ?? "-1", 10) === offset),
+  );
+  render();
+}
+
 function renderPlanner(): void {
   const el = $("#planner");
+  const side = $("#plan-side");
+  const cards = $("#plan-cards");
   if (!state.place) {
+    side.innerHTML = "";
+    cards.innerHTML = "";
+    // #27: the first-run empty state is a single line.
     el.innerHTML = `
       <section class="card empty-state">
-        <h2>Enter a location</h2>
-        <p class="note">Use the search box above — a place name, a ZIP code, or coordinates —
-        tap the map icon to pick a spot, or the crosshair to use your location.
-        Your last location is remembered on this device for next time.</p>
+        <p>Search above, pick on the map, or use your location.</p>
+      </section>`;
+    return;
+  }
+  const target = currentTarget();
+  if (!target) {
+    // #24: nothing computes until a real target is chosen.
+    side.innerHTML = "";
+    cards.innerHTML = "";
+    el.innerHTML = `
+      <section class="card empty-state">
+        <p>Pick a target to see best times.</p>
       </section>`;
     return;
   }
   const key = addDaysKey(startKey(), state.dayOffset);
   const plan = planForKey(key);
-  const target = currentTarget();
   const day: ExportDay = { plan, date: parseDateKey(key), targetName: target.name, locationName: locationShortName() };
+
+  side.innerHTML = heroHtml(plan, key, target);
+  cards.innerHTML = areaCardsHtml(key);
 
   if (plan.veto) {
     el.innerHTML = `
@@ -265,22 +513,6 @@ function renderPlanner(): void {
       </section>`;
     return;
   }
-
-  const slotsHtml = plan.slots.length
-    ? plan.slots
-        .map(
-          (s, i) => `
-        <div class="slot slot-${s.label.toLowerCase()}">
-          <div class="slot-label">${s.labelSymbol} ${s.bestToday ? "Best today" : s.label}</div>
-          <div class="slot-body">
-            <div class="slot-time">${fmtTime(s.start)} – ${fmtTime(s.end)}</div>
-            <div class="slot-reason">${esc(s.reason)}</div>
-            ${slotAddLinks(day, i)}
-          </div>
-        </div>`,
-        )
-        .join("")
-    : `<p class="note">No window reached the Okay level today. Rest of the day: slow.</p>`;
 
   const extras: string[] = [];
   if (state.usgs?.waterTempF !== undefined && key === startKey() && target.kind !== "hunting") {
@@ -299,19 +531,24 @@ function renderPlanner(): void {
     extras.push(`Tides from NOAA station ${state.tideStationId}${state.tideStationName ? ` (${esc(state.tideStationName)})` : ""}.`);
   }
 
+  const items = detailItems(plan, key, target);
+  const listHtml = items
+    .map((it) => `<div class="det2-row"><span class="det2-k">${esc(it.label)}</span><span class="det2-v">${esc(it.value)}</span></div>`)
+    .join("");
+  const tilesHtml = items
+    .map((it) => `<div class="tile"><div class="tile-k">${esc(it.label)}</div><div class="tile-v">${esc(it.value)}</div></div>`)
+    .join("");
+
   el.innerHTML = `
-    <section class="card">
-      <div class="day-head">
-        <h2>${esc(fmtDay(key))} — ${esc(target.name)}</h2>
-        <div class="verdict verdict-${plan.verdict.toLowerCase()}">Day: ${plan.verdict.toUpperCase()}</div>
-      </div>
-      ${slotsHtml}
-      ${plan.slots.length ? `<p class="note">Rest of the day: slow.</p>` : ""}
+    ${slotCardHtml(day, plan)}
+    <section class="details-sec">
+      <h3>Day details — ${esc(target.name)}</h3>
+      <div class="det2">${listHtml}</div>
+      <div class="dettiles">${tilesHtml}</div>
       ${plan.heldBackBy ? `<p class="held-back">Day held back by: ${esc(plan.heldBackBy)}.</p>` : ""}
       ${extras.map((x) => `<p class="note">${x}</p>`).join("")}
       <p class="note astro">
-        Sunrise ${fmtTime(plan.astro.sunrise)} · Sunset ${fmtTime(plan.astro.sunset)}
-        · Moon ${Math.round(plan.astro.moonIllumination * 100)}% lit
+        Moonrise ${plan.astro.moonrise ? fmtTime(plan.astro.moonrise) : "—"} · Moonset ${plan.astro.moonset ? fmtTime(plan.astro.moonset) : "—"}
         ${state.weather?.timezone ? `· Times in ${esc(state.weather.timezone.replace("_", " "))}` : ""}
         ${plan.typical ? "· Typical-day estimate (no forecast for this date)" : ""}
       </p>
@@ -319,12 +556,27 @@ function renderPlanner(): void {
         <button type="button" id="export-day">Export this day (.ics)</button>
       </div>
     </section>`;
-  $("#export-day").addEventListener("click", () => {
-    downloadIcs([day], {
-      includeTypical: state.settings.includeTypical,
-      includeDontGo: state.settings.includeDontGo,
+  el.querySelectorAll<HTMLElement>(".wk-day").forEach((b) =>
+    b.addEventListener("click", () => jumpToDay(parseInt(b.dataset.offset ?? "0", 10))),
+  );
+  // Enrichment sections are inserted between slots and details.
+  const detailsSec = el.querySelector(".details-sec");
+  if (detailsSec) {
+    const wrap = document.createElement("div");
+    wrap.innerHTML = `${hourlyHtml(plan)}${weekGlanceHtml()}`;
+    el.insertBefore(wrap, detailsSec);
+    wrap.querySelectorAll<HTMLElement>(".wk-day").forEach((b) =>
+      b.addEventListener("click", () => jumpToDay(parseInt(b.dataset.offset ?? "0", 10))),
+    );
+  }
+  const exportBtn = $("#export-day");
+  if (exportBtn)
+    exportBtn.addEventListener("click", () => {
+      downloadIcs([day], {
+        includeTypical: state.settings.includeTypical,
+        includeDontGo: state.settings.includeDontGo,
+      });
     });
-  });
 }
 
 function daySummary(key: string): { band: string; best: string; hi: number; lo: number; wind: number; rain: number } {
@@ -349,12 +601,19 @@ function renderTrends(): void {
   if (!state.place) {
     el.innerHTML = `
       <section class="card empty-state">
-        <h2>Enter a location</h2>
-        <p class="note">Trends appear once a location is chosen above.</p>
+        <p>Trends appear once a location is chosen above.</p>
       </section>`;
     return;
   }
   const target = currentTarget();
+  if (!target) {
+    // #24: Trends is gated the same way as the planner.
+    el.innerHTML = `
+      <section class="card empty-state">
+        <p>Pick a target to see best times.</p>
+      </section>`;
+    return;
+  }
   const start = startKey();
   const blocks: string[] = [];
   const weekPlans: { key: string; plan: DayPlan }[] = [];
@@ -371,6 +630,7 @@ function renderTrends(): void {
         `<div class="day-block band-${band.toLowerCase()} ${kind}" data-key="${key}" tabindex="0" role="button" aria-label="${key} detail">
            <span class="db-dow">${"SMTWTFS"[date.getDay()]}</span>
            <span class="db-num">${date.getDate()}</span>
+           <span class="db-band">${esc(band === "Veto" ? "Don't go" : band)}</span>
          </div>`,
       );
     }
@@ -386,7 +646,8 @@ function renderTrends(): void {
         .join(" ")}</p>`
     : "";
   el.innerHTML = `
-    <section class="card">
+    <div class="trends-layout">
+    <section class="card trends-main">
       <h2>Viability trends</h2>
       ${blocks.join("")}
       ${chips}
@@ -400,7 +661,12 @@ function renderTrends(): void {
       <div class="row export-row">
         <button type="button" id="export-all">Export forecast days (.ics)</button>
       </div>
-    </section>`;
+    </section>
+    <aside id="day-panel" class="card day-panel">
+      <h3>Day detail</h3>
+      <p class="note">Select a day to see its full detail here.</p>
+    </aside>
+    </div>`;
 
   $("#export-all").addEventListener("click", () => {
     const days = forecastKeys().map((k) => exportDayFor(k));
@@ -430,25 +696,30 @@ function renderTrends(): void {
     cell.addEventListener("mouseleave", () => (tooltip.hidden = true));
     cell.addEventListener("click", () => {
       tooltip.hidden = true;
-      openDayModal(key);
+      openDayDetail(key);
     });
   });
 }
 
 function render(): void {
-  $("#planner").hidden = state.view !== "planner";
-  $("#trends").hidden = state.view !== "trends";
-  if (state.view === "planner") renderPlanner();
+  const planner = state.view === "planner";
+  $("#planner").hidden = !planner;
+  $("#plan-side").hidden = !planner;
+  $("#plan-cards").hidden = !planner;
+  $("#trends").hidden = planner;
+  if (planner) renderPlanner();
   else renderTrends();
 }
 
 // ------------------------------------------------------------- day modal
 
-function openDayModal(key: string): void {
+/** Full day detail markup — shared by the modal (narrow widths) and the
+ *  Trends side panel (desktop widths, #28). */
+function dayDetailHtml(key: string): string {
   const plan = planForKey(key);
   const target = currentTarget();
+  if (!target) return "";
   const day: ExportDay = { plan, date: parseDateKey(key), targetName: target.name, locationName: locationShortName() };
-  $("#day-modal-title").textContent = `${fmtDay(key)} — ${target.name}`;
   const hours = state.weather?.days.get(key) ?? [];
   const tides = tidesForDay(state.tides, parseDateKey(key));
   const tideHtml = tides?.events.length
@@ -459,22 +730,22 @@ function openDayModal(key: string): void {
   const slotsHtml = plan.veto
     ? `<p class="held-back">Don't go — ${esc(plan.veto)}</p>`
     : plan.slots.length
-      ? plan.slots
+      ? `<div class="slotgrid">${plan.slots
           .map(
             (s, i) => `
-          <div class="slot slot-${s.label.toLowerCase()}">
-            <div class="slot-label">${s.labelSymbol} ${s.bestToday ? "Best today" : s.label}</div>
-            <div class="slot-body">
-              <div class="slot-time">${fmtTime(s.start)} – ${fmtTime(s.end)}</div>
-              <div class="slot-reason">${esc(s.reason)}</div>
-              ${slotAddLinks(day, i)}
+          <div class="slot2 spine-${s.label.toLowerCase()}">
+            <div class="slot2-top">
+              <span class="slot2-label lbl-${s.label.toLowerCase()}">${s.labelSymbol} ${s.bestToday ? "Best today" : s.label}</span>
+              <span class="slot2-time">${fmtRange(s.start, s.end)}</span>
             </div>
+            <div class="slot2-reason">${esc(s.reason)}</div>
+            ${slotAddLinks(day, i)}
           </div>`,
           )
-          .join("")
+          .join("")}</div>`
       : `<p class="note">No window reached the Okay level this day.</p>`;
-  $("#day-modal-content").innerHTML = `
-    <div class="verdict verdict-${plan.verdict.toLowerCase()}">Day: ${plan.verdict.toUpperCase()}</div>
+  return `
+    <div class="verdict verdict-${bandKey(plan)}">Day: ${bandWord(plan).toUpperCase()}</div>
     ${slotsHtml}
     ${plan.heldBackBy && !plan.veto ? `<p class="held-back">Day held back by: ${esc(plan.heldBackBy)}.</p>` : ""}
     ${
@@ -490,29 +761,50 @@ function openDayModal(key: string): void {
     Moon ${Math.round(plan.astro.moonIllumination * 100)}% lit · Solunar major ${fmtTime(plan.solunarMajor.start)} – ${fmtTime(plan.solunarMajor.end)} (annotation only)</p>
     ${tideHtml}
     <div class="row modal-actions">
-      <button type="button" id="plan-this-day">Plan this day</button>
-      <button type="button" id="export-this-day">Export this day (.ics)</button>
+      <button type="button" class="plan-this-day">Plan this day</button>
+      <button type="button" class="export-this-day">Export this day (.ics)</button>
     </div>`;
-  $("#day-modal").hidden = false;
-  $("#plan-this-day").addEventListener("click", () => {
-    const offset = Math.round((parseDateKey(key).getTime() - parseDateKey(startKey()).getTime()) / 86400_000);
-    state.dayOffset = offset;
-    state.view = "planner";
-    document.querySelectorAll("#view-picker .chip").forEach((x) =>
-      x.classList.toggle("selected", (x as HTMLElement).dataset.view === "planner"),
-    );
-    document.querySelectorAll("#day-picker .chip").forEach((x) =>
-      x.classList.toggle("selected", parseInt((x as HTMLElement).dataset.offset ?? "0", 10) === offset),
-    );
-    $("#day-modal").hidden = true;
-    render();
-  });
-  $("#export-this-day").addEventListener("click", () => {
-    downloadIcs([day], {
-      includeTypical: state.settings.includeTypical,
-      includeDontGo: state.settings.includeDontGo,
+}
+
+function wireDayDetail(root: HTMLElement, key: string): void {
+  const planBtn = root.querySelector<HTMLElement>(".plan-this-day");
+  if (planBtn)
+    planBtn.addEventListener("click", () => {
+      $("#day-modal").hidden = true;
+      const offset = Math.round(
+        (parseDateKey(key).getTime() - parseDateKey(startKey()).getTime()) / 86400_000,
+      );
+      jumpToDay(offset);
     });
-  });
+  const expBtn = root.querySelector<HTMLElement>(".export-this-day");
+  if (expBtn)
+    expBtn.addEventListener("click", () => {
+      downloadIcs([exportDayFor(key)], {
+        includeTypical: state.settings.includeTypical,
+        includeDontGo: state.settings.includeDontGo,
+      });
+    });
+}
+
+/** #28: at desktop widths the Trends day detail opens in a side panel;
+ *  below that it stays a modal. */
+function openDayDetail(key: string): void {
+  const target = currentTarget();
+  if (!target) return;
+  if (window.matchMedia("(min-width: 75em)").matches) {
+    const panel = $("#day-panel");
+    if (panel) {
+      panel.innerHTML = `<h3>${esc(fmtDay(key))} — ${esc(target.name)}</h3>${dayDetailHtml(key)}`;
+      wireDayDetail(panel, key);
+      panel.scrollIntoView({ block: "nearest" });
+      return;
+    }
+  }
+  $("#day-modal-title").textContent = `${fmtDay(key)} — ${target.name}`;
+  const content = $("#day-modal-content");
+  content.innerHTML = dayDetailHtml(key);
+  wireDayDetail(content, key);
+  $("#day-modal").hidden = false;
 }
 
 // ------------------------------------------------------------- explainer
@@ -533,7 +825,7 @@ const INFO_HTML = `
   <h3>What moves the score</h3>
   <table class="factors">
     <tr><td>Season &amp; temperature</td><td class="dots">●●●○</td><td>Peak season and water in the target's prime band carry the day (0–50 base).</td></tr>
-    <tr><td>Light — dawn &amp; dusk</td><td class="dots">●●●○</td><td>The main daily activity windows (night for catfish).</td></tr>
+    <tr><td>Light — dawn &amp; dusk</td><td class="dots">●●●○</td><td>The main daily activity windows for most targets.</td></tr>
     <tr><td>Moving water (saltwater)</td><td class="dots">●●●○</td><td>Tide current from the nearest NOAA station; combined with low light it scores most.</td></tr>
     <tr><td>Wind &amp; rain</td><td class="dots">●●○○</td><td>Modifiers — they trim windows, and dangerous wind vetoes the day.</td></tr>
     <tr><td>Pressure trend</td><td class="dots">●○○○</td><td>Capped at ±2 on purpose — the famous pressure bands are anecdote, not evidence.</td></tr>
@@ -555,6 +847,18 @@ function setSearchStatus(msg: string): void {
   $("#search-status").textContent = msg;
 }
 
+/** #22: the clear (×) control is visible only while the field has text.
+ *  It is visibility-toggled (never display:none) so the search-box layout
+ *  never shifts, and it leaves tab order while hidden. */
+function syncClearBtn(): void {
+  const btn = $("#clear-btn");
+  const input = $<HTMLInputElement>("#place-search");
+  const show = input.value.length > 0;
+  btn.classList.toggle("show", show);
+  btn.tabIndex = show ? 0 : -1;
+  btn.setAttribute("aria-hidden", String(!show));
+}
+
 function applyPlace(p: Place): void {
   const place: Place = {
     lat: Math.round(p.lat * 10000) / 10000,
@@ -564,6 +868,7 @@ function applyPlace(p: Place): void {
   state.place = place;
   saveLastPlace(place);
   $<HTMLInputElement>("#place-search").value = place.label;
+  syncClearBtn();
   setSearchStatus(`${place.label} — ${place.lat.toFixed(4)}, ${place.lon.toFixed(4)}`);
   hidePickList();
   closeMapAll();
@@ -850,15 +1155,201 @@ function confirmMap(): void {
   });
 }
 
+// ------------------------------------------------------------- themes (#25)
+
+const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
+
+function resolvedTheme(): "light" | "dark" {
+  const pref = state.settings.theme;
+  return pref === "device" ? (themeMedia.matches ? "dark" : "light") : pref;
+}
+
+function applyTheme(): void {
+  document.documentElement.dataset.theme = resolvedTheme();
+}
+
+// Follow device tracks the OS live, including mid-session flips.
+themeMedia.addEventListener("change", () => {
+  if (state.settings.theme === "device") applyTheme();
+});
+
+// ------------------------------------------------------------- print (#26)
+// Sheets render into #print-root from the same plan data as the screen.
+// Day = proof 31; Week = summary page, then details with the sheet header
+// repeated (38 + 40); Month = compact details only, no summary (37).
+
+type PrintMode = "day" | "week" | "month";
+
+const PRINT_FOOTER =
+  "Zero Light provides planning guidance only. Ratings estimate fish and game activity — " +
+  "they do not guarantee activity, success, or safe conditions. Always confirm seasons, " +
+  "limits, licensing, closures, and local conditions with official sources before hunting or fishing.";
+
+function printHeaderHtml(viewLabel: string, rangeLabel: string): string {
+  const now = new Date();
+  const printed =
+    `Printed ${now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}` +
+    ` · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  const target = currentTarget();
+  return `
+  <div class="phead"><h1>Zero Light</h1><span class="pprinted">${esc(printed)}</span></div>
+  <p class="pmeta"><strong>${esc(locationShortName())}</strong> · Target: <strong>${esc(target?.name ?? "")}</strong></p>
+  <p class="pmeta">${esc(viewLabel)} — ${esc(rangeLabel)}</p>`;
+}
+
+function printSlotLine(s: DayPlan["slots"][number], compact = false): string {
+  const range = compact ? fmtRange(s.start, s.end) : `${fmtTime(s.start)} – ${fmtTime(s.end)}`;
+  const head = s.bestToday ? `· Best today — ${range}` : `${s.labelSymbol} ${s.label} — ${range}`;
+  return `<div class="pslot"><strong>${esc(head)}</strong><div class="preason">${esc(s.reason)}</div></div>`;
+}
+
+function printDayFigs(key: string): { hi: string; lo: string; wind: string; rain: string } {
+  const hours = state.weather?.days.get(key) ?? [];
+  if (!hours.length) return { hi: "—", lo: "—", wind: "—", rain: "—" };
+  return {
+    hi: `${Math.round(Math.max(...hours.map((h) => h.tempF)))}°`,
+    lo: `${Math.round(Math.min(...hours.map((h) => h.tempF)))}°`,
+    wind: `to ${Math.round(Math.max(...hours.map((h) => h.windMph)))} mph`,
+    rain: `${Math.round(Math.max(...hours.map((h) => h.precipProb)))}%`,
+  };
+}
+
+function printDayBlock(key: string, compact: boolean): string {
+  const plan = planForKey(key);
+  const figs = printDayFigs(key);
+  const band = bandWord(plan);
+  const figsLine = `High ${figs.hi} · Low ${figs.lo} · Wind ${figs.wind} · Rain chance ${figs.rain}`;
+  if (compact) {
+    return `
+    <div class="pcblock">
+      <div class="pstatus pband-${bandKey(plan)}"><strong>${esc(fmtDay(key))} — ${esc(band)}</strong> · ${figsLine}${plan.typical ? " (typical-day estimate)" : ""}</div>
+      ${plan.veto ? `<div class="pveto">Don't go — ${esc(plan.veto)}</div>` : ""}
+      ${!plan.veto && plan.slots.length ? plan.slots.map((s) => printSlotLine(s, true)).join("") : ""}
+      ${!plan.veto && !plan.slots.length ? `<div class="pnone">No window rated Okay or better.</div>` : ""}
+    </div>`;
+  }
+  const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+  return `
+  <div class="pdayblock">
+    <h3 class="pstatus pband-${bandKey(plan)}">${esc(fmtDay(key))} — ${esc(band)}</h3>
+    <div class="pdataline">Best window ${esc(best)} · ${figsLine}${plan.typical ? " · Typical-day estimate" : ""}</div>
+    ${plan.veto ? `<div class="pveto">Don't go — ${esc(plan.veto)}</div>` : ""}
+    ${!plan.veto && plan.slots.length ? plan.slots.map((s) => printSlotLine(s)).join("") : ""}
+    ${!plan.veto && !plan.slots.length ? `<div class="pnone">No window rated Okay or better.</div>` : ""}
+  </div>`;
+}
+
+function renderPrint(mode: PrintMode): void {
+  const target = currentTarget();
+  if (!state.place || !target) return;
+  const root = $("#print-root");
+  const start = startKey();
+  let body = "";
+  if (mode === "day") {
+    const key = addDaysKey(start, state.dayOffset);
+    const plan = planForKey(key);
+    const hours = state.weather?.days.get(key) ?? [];
+    const rows: [string, string][] = [
+      ["Sunrise / Sunset", `${fmtTime(plan.astro.sunrise)} / ${fmtTime(plan.astro.sunset)}`],
+    ];
+    if (hours.length) {
+      const figs = printDayFigs(key);
+      rows.push(["High / Low", `${figs.hi} / ${figs.lo}`]);
+      rows.push(["Wind", figs.wind]);
+      rows.push(["Rain chance", figs.rain]);
+      const trend = pressureTrendPer6h(hours);
+      const inHg = (hours[hours.length - 1].pressureHpa * 0.02953).toFixed(2);
+      const word =
+        trend <= -1.5 ? "falling" : trend < -0.3 ? "falling slowly" : trend <= 0.3 ? "steady" : trend <= 1.5 ? "rising slowly" : "rising";
+      rows.push(["Pressure", `${inHg} inHg (${word})`]);
+    }
+    if (state.usgs?.waterTempF !== undefined && key === start && target.kind !== "hunting") {
+      rows.push([
+        "Water temperature",
+        `${Math.round(state.usgs.waterTempF)}°F — USGS gauge “${state.usgs.stationName}”`,
+      ]);
+    }
+    const tides = tidesForDay(state.tides, parseDateKey(key));
+    if (tides?.events.length) {
+      rows.push([
+        "Tides",
+        tides.events.map((e) => `${e.type} ${fmtTime(e.time)} (${e.heightFt.toFixed(1)} ft)`).join("; ") +
+          (state.tideStationName ? ` — NOAA station ${state.tideStationId} (${state.tideStationName})` : ""),
+      ]);
+    }
+    body = `
+    ${printHeaderHtml("Day view", fmtDay(key))}
+    <h2>Day rating: ${esc(bandWord(plan))}</h2>
+    ${plan.veto ? `<p class="pveto">Don't go — ${esc(plan.veto)}</p>` : ""}
+    ${plan.typical ? `<p class="pnote">Typical-day estimate — no forecast exists for this date yet.</p>` : ""}
+    <table class="pkv">${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
+    <h2>Best windows</h2>
+    ${plan.slots.length ? plan.slots.map((s) => printSlotLine(s)).join("") : `<p>No window rated Okay or better.</p>`}`;
+  } else if (mode === "week") {
+    const keys = Array.from({ length: 7 }, (_, i) => addDaysKey(start, i));
+    const range = `${fmtDay(keys[0])} – ${fmtDay(keys[6])}`;
+    const sumRows = keys
+      .map((key) => {
+        const plan = planForKey(key);
+        const figs = printDayFigs(key);
+        const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+        return `<tr><td>${esc(fmtDay(key))}</td><td>${esc(bandWord(plan))}</td><td>${esc(best)}</td><td>${figs.hi} / ${figs.lo}</td></tr>`;
+      })
+      .join("");
+    body = `
+    ${printHeaderHtml("Week view", range)}
+    <table class="psum"><thead><tr><th>Date</th><th>Rating</th><th>Best window</th><th>High / Low</th></tr></thead><tbody>${sumRows}</tbody></table>
+    <div class="pbreak"></div>
+    ${printHeaderHtml("Week view", range)}
+    <h2>Day details</h2>
+    ${keys.map((k) => printDayBlock(k, false)).join("")}`;
+  } else {
+    const keys = Array.from({ length: 30 }, (_, i) => addDaysKey(start, i));
+    const range = `${fmtDay(keys[0])} – ${fmtDay(keys[29])}`;
+    body = `
+    ${printHeaderHtml("Month view", range)}
+    ${keys.map((k) => printDayBlock(k, true)).join("")}`;
+  }
+  root.innerHTML = `${body}<p class="pfooter">${esc(PRINT_FOOTER)}</p>`;
+}
+
+function doPrint(mode: PrintMode): void {
+  if (!state.place || !currentTarget()) {
+    $("#status").textContent = "Choose a location and a target first.";
+    return;
+  }
+  renderPrint(mode);
+  window.print();
+}
+
+// Browser print (Ctrl+P) without the button: default to the current view.
+window.addEventListener("beforeprint", () => {
+  if (state.place && currentTarget() && !$("#print-root").innerHTML) {
+    renderPrint(state.view === "trends" ? "week" : "day");
+  }
+});
+
 // ------------------------------------------------------------- wiring
 
 function rebuildTargets(): void {
   // Any searched place can host any target kind (the v0.2.0 preset
   // kind restrictions went away with the presets, item #17).
+  // #24: a disabled "Choose a target…" placeholder leads the list; an
+  // unset or no-longer-valid id falls back to it (never to TARGETS[0]).
   const sel = $<HTMLSelectElement>("#target");
-  sel.innerHTML = TARGETS.map((t) => `<option value="${t.id}">${t.name}</option>`).join("");
-  if (!TARGETS.some((t) => t.id === state.targetId)) state.targetId = TARGETS[0].id;
-  sel.value = state.targetId;
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Choose a target…";
+  placeholder.disabled = true;
+  sel.replaceChildren(placeholder);
+  for (const t of TARGETS) {
+    const o = document.createElement("option");
+    o.value = t.id;
+    o.textContent = t.name;
+    sel.append(o);
+  }
+  if (state.targetId && !TARGETS.some((t) => t.id === state.targetId)) state.targetId = null;
+  sel.value = state.targetId ?? "";
 }
 
 function openModal(id: string): void {
@@ -882,8 +1373,17 @@ function aboutHtml(version: string): string {
   const link = (href: string, name: string, what: string) =>
     `<li><a href="${href}" target="_blank" rel="noopener">${name}</a> — ${what}</li>`;
   return `
+  <img class="about-lockup about-lockup-light" src="${lockupLightUrl}" alt="Zero Light" />
+  <img class="about-lockup about-lockup-dark" src="${lockupDarkUrl}" alt="Zero Light" />
   <p><strong>Zero Light</strong> — best times to hunt and fish for a location.</p>
   <p class="note">${esc(version)} · © Wade Feltman — All Rights Reserved.</p>
+  <h3>Using Zero Light</h3>
+  <p>Use the search box — a place name, a ZIP code, or coordinates — tap the map
+  icon to pick a spot on the map, or the crosshair to use your location. Your
+  last location is remembered on this device for next time. Pick a target and
+  a day to see that day's best windows in the Planner; Trends shows how the
+  coming weeks rate. The printer icon in the header prints the day, week, or
+  month; the gear holds theme and calendar-export settings.</p>
   <h3>Data &amp; services</h3>
   <ul class="credits">
     ${link("https://open-meteo.com/", "Open-Meteo", "weather forecasts")}
@@ -904,6 +1404,22 @@ function closeInfoMenu(): void {
   $("#info-btn").setAttribute("aria-expanded", "false");
 }
 
+function closePrintMenu(): void {
+  $("#print-menu").hidden = true;
+  $("#print-btn").setAttribute("aria-expanded", "false");
+}
+
+/** #25: the Settings theme chips mirror the saved preference when the
+ *  modal opens; chip clicks stage a pending value that Save persists. */
+let pendingTheme: ThemePref = "device";
+
+function syncThemeChips(): void {
+  pendingTheme = state.settings.theme;
+  document.querySelectorAll<HTMLElement>("#theme-picker .chip").forEach((c) =>
+    c.classList.toggle("selected", c.dataset.themePref === pendingTheme),
+  );
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
   // Restore the last selected location (device-only, item #17). A
   // first run stays at the "enter a location" state — no default, no
@@ -916,10 +1432,26 @@ window.addEventListener("DOMContentLoaded", async () => {
   } else {
     $<HTMLInputElement>("#place-search").focus();
   }
+  syncClearBtn();
+
+  // #29: header brand mark. #25: apply the (already validated) theme.
+  $<HTMLImageElement>("#brand-mark").src = brandMarkUrl;
+  applyTheme();
+
+  // #24: restore the last-used target; an id that no longer exists is
+  // ignored and the placeholder shows instead.
+  const lastTarget = loadLastTargetId();
+  state.targetId = TARGETS.some((t) => t.id === lastTarget) ? lastTarget : null;
 
   rebuildTargets();
   $<HTMLSelectElement>("#target").addEventListener("change", (e) => {
-    state.targetId = (e.target as HTMLSelectElement).value;
+    const v = (e.target as HTMLSelectElement).value;
+    if (TARGETS.some((t) => t.id === v)) {
+      state.targetId = v;
+      saveLastTargetId(v);
+    } else {
+      state.targetId = null;
+    }
     state.plansCache.clear();
     render();
   });
@@ -932,7 +1464,18 @@ window.addEventListener("DOMContentLoaded", async () => {
       void resolveSearch();
     }
   });
-  searchInput.addEventListener("input", () => hidePickList());
+  searchInput.addEventListener("input", () => {
+    hidePickList();
+    syncClearBtn();
+  });
+  // #22: clear text + close the pick list, keep focus; the loaded place
+  // and the saved last place are untouched.
+  $("#clear-btn").addEventListener("click", () => {
+    searchInput.value = "";
+    hidePickList();
+    syncClearBtn();
+    searchInput.focus();
+  });
   $("#geo-btn").addEventListener("click", () => locateMe());
   $("#map-btn").addEventListener("click", () => {
     hidePickList();
@@ -968,10 +1511,15 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   $("#refresh-btn").addEventListener("click", () => void ensureData(true));
 
-  // Header icons + modals. The ⓘ opens a small menu (item #18).
-  $("#settings-btn").addEventListener("click", () => openModal("settings-modal"));
+  // Header icons + modals. The ⓘ opens a small menu (item #18); the
+  // printer icon opens the #26 print menu the same way.
+  $("#settings-btn").addEventListener("click", () => {
+    syncThemeChips();
+    openModal("settings-modal");
+  });
   $("#info-btn").addEventListener("click", (e) => {
     e.stopPropagation();
+    closePrintMenu();
     const menu = $("#info-menu");
     const willOpen = menu.hidden;
     menu.hidden = !willOpen;
@@ -985,9 +1533,31 @@ window.addEventListener("DOMContentLoaded", async () => {
     closeInfoMenu();
     openModal("about-modal");
   });
+  $("#print-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeInfoMenu();
+    const menu = $("#print-menu");
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    $("#print-btn").setAttribute("aria-expanded", String(willOpen));
+  });
+  $("#print-day").addEventListener("click", () => {
+    closePrintMenu();
+    doPrint("day");
+  });
+  $("#print-week").addEventListener("click", () => {
+    closePrintMenu();
+    doPrint("week");
+  });
+  $("#print-month").addEventListener("click", () => {
+    closePrintMenu();
+    doPrint("month");
+  });
   document.addEventListener("click", (e) => {
     const menu = $("#info-menu");
     if (!menu.hidden && !menu.contains(e.target as Node)) closeInfoMenu();
+    const pmenu = $("#print-menu");
+    if (!pmenu.hidden && !pmenu.contains(e.target as Node)) closePrintMenu();
   });
   $("#info-content").innerHTML = INFO_HTML;
   document.querySelectorAll<HTMLElement>(".modal-close").forEach((b) =>
@@ -1009,6 +1579,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   // decided 2026-11-12) → pick list.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    if (!$("#print-menu").hidden) {
+      closePrintMenu();
+      return;
+    }
     if (!$("#info-menu").hidden) {
       closeInfoMenu();
       return;
@@ -1020,28 +1594,40 @@ window.addEventListener("DOMContentLoaded", async () => {
     hidePickList();
   });
 
-  // Settings form — calendar export toggles only (item #20 removed
-  // the key and endpoint fields; keys live server-side now).
+  // Settings form — theme (#25) + calendar export toggles (item #20
+  // removed the key and endpoint fields; keys live server-side now).
   const s = state.settings;
   $<HTMLInputElement>("#export-typical").checked = s.includeTypical;
   $<HTMLInputElement>("#export-dontgo").checked = s.includeDontGo;
+  syncThemeChips();
+  document.querySelectorAll<HTMLElement>("#theme-picker .chip").forEach((c) =>
+    c.addEventListener("click", () => {
+      const v = c.dataset.themePref;
+      if (v === "device" || v === "light" || v === "dark") pendingTheme = v;
+      document.querySelectorAll<HTMLElement>("#theme-picker .chip").forEach((x) =>
+        x.classList.toggle("selected", x.dataset.themePref === pendingTheme),
+      );
+    }),
+  );
   $("#save-settings").addEventListener("click", () => {
     state.settings = {
       includeTypical: $<HTMLInputElement>("#export-typical").checked,
       includeDontGo: $<HTMLInputElement>("#export-dontgo").checked,
+      theme: pendingTheme,
     };
     saveSettings(state.settings);
+    applyTheme();
     $("#settings-modal").hidden = true;
     $("#status").textContent = "Settings saved on this device.";
   });
 
   // Rust app-info command (replaces the foundation's greet example).
-  let versionLabel = "Zero Light 0.3.0";
+  // The version lives in the About modal only (#27 removed the footer).
+  let versionLabel = "Zero Light 0.4.0";
   try {
     versionLabel = await invoke<string>("app_info");
-    $("#app-info").textContent = ` · ${versionLabel}`;
   } catch {
-    $("#app-info").textContent = ` · ${versionLabel}`;
+    /* web build: keep the fallback label */
   }
   $("#about-content").innerHTML = aboutHtml(versionLabel);
 

@@ -1,14 +1,19 @@
-// UI regression check (next-build item #6; extended for v0.3.0 #17/#18/#20).
+// UI regression check (next-build item #6; extended for v0.3.0 #17/#18/#20
+// and v0.4.0 #22–#29).
 //
 // The v0.1.0 startup bug passed the engine-only smoke test (24/24)
 // because nothing ever rendered the app. This check serves the built
 // dist/ headlessly, intercepts the data APIs (including the Layer 2
 // Worker) with deterministic fixtures, and asserts the interface
-// actually populates: first-run empty state, unified location search
-// (coordinates / pick list / geolocation), planner verdict, trends
-// strip, day-detail modal, slimmed settings modal, ⓘ menu with the
-// explainer and the About & credits modal, map panel, and last-place
-// restore after reload.
+// actually populates: first-run state (#27 one-line empty state, empty
+// status line), #24 target placeholder gating + the alphabetical
+// 11-target list, unified location search (coordinates / pick list /
+// geolocation), #22 clear (×) button, #28 Band Hero + stencil +
+// enrichment, trends strip + day detail (modal below 75em, side panel
+// at desktop), #25 theme setting, #26 print menu + sheet rendering,
+// slimmed settings modal, ⓘ menu with the explainer and the About &
+// credits modal (#29 lockup, "Using Zero Light"), map panel, and
+// last-place + last-target restore after reload.
 //
 // Run: npm run build && node scripts/ui-check.mjs
 
@@ -24,6 +29,7 @@ const MIME = {
   ".css": "text/css",
   ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".webp": "image/webp",
   ".ico": "image/x-icon",
   ".json": "application/json",
 };
@@ -140,6 +146,10 @@ try {
   const context = await browser.newContext({
     geolocation: { latitude: 27.9506, longitude: -82.4572 },
     permissions: ["geolocation"],
+    // 1000px = Expanded tier (52.5em–75em): enrichment in flow, day
+    // detail still a modal. Desktop panel behaviour is checked later
+    // by widening the viewport past 75em (1200px).
+    viewport: { width: 1000, height: 850 },
   });
   const page = await context.newPage();
   page.on("pageerror", (e) => console.log("pageerror:", e.message));
@@ -202,29 +212,142 @@ try {
   check("no preset location dropdown remains", (await page.locator("#location").count()) === 0);
   check("unified search box exists", (await page.locator("#place-search").count()) === 1);
 
-  // First-run state (#17): no default location, empty-state card.
+  // #23 tagline, #29 header brand mark, #27 footer removal.
+  check(
+    "tagline is the locked #23 text",
+    (await page.textContent(".subtitle"))?.trim() === "Your best times to hunt and fish.",
+  );
+  check(
+    "header shows the #29 square mark",
+    await page.evaluate(() => {
+      const img = document.querySelector("#brand-mark");
+      // The 1 KB master is inlined by Vite as a data URI; either form OK
+      // as long as the image actually loads.
+      return (
+        !!img &&
+        (img.getAttribute("src") ?? "").length > 0 &&
+        img.complete &&
+        img.naturalWidth > 0
+      );
+    }),
+  );
+  check("footer scoring paragraph is gone (#27)", (await page.locator("footer").count()) === 0);
+  check("no #app-info element remains (#27)", (await page.locator("#app-info").count()) === 0);
+
+  // #27: the line under the search box carries no standing text.
+  check(
+    "search status line starts empty (#27)",
+    ((await page.textContent("#search-status")) ?? "").trim() === "",
+  );
+
+  // First-run state (#17 + #27): no default location, one-line card.
   await page.waitForFunction(
-    () => document.querySelector("#planner")?.textContent?.includes("Enter a location"),
+    () => document.querySelector("#planner")?.textContent?.includes("Search above, pick on the map"),
     null,
     { timeout: 10000 },
   );
-  check("first run shows the enter-a-location state", true);
+  check("first run shows the one-line empty state (#27)", true);
 
-  // Typed coordinates apply directly and load the planner.
+  // #24: target list = disabled placeholder + alphabetical 11.
+  const optionTexts = await page.locator("#target option").allTextContents();
+  check("target select has placeholder + 11 targets", optionTexts.length === 12);
+  check("first option is the placeholder", optionTexts[0] === "Choose a target…");
+  check(
+    "targets are the alphabetical 11 (no Catfish/Crappie)",
+    JSON.stringify(optionTexts.slice(1)) ===
+      JSON.stringify([
+        "Cobia", "Flounder", "Grouper", "Largemouth Bass", "Redfish",
+        "Snapper", "Snook", "Speckled Trout", "Turkey", "Waterfowl", "Whitetail Deer",
+      ]),
+  );
+  check("no target chosen on first run", (await page.inputValue("#target")) === "");
+
+  // Typed coordinates apply directly; with no target chosen the
+  // planner is gated (#24).
   await page.fill("#place-search", "27.9506, -82.4572");
   await page.press("#place-search", "Enter");
   await page.waitForFunction(
-    () => document.querySelector("#planner")?.textContent?.includes("Day:"),
+    () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
     null,
     { timeout: 20000 },
   );
-  const plannerText = await page.textContent("#planner");
-  check("planner shows a day verdict after coordinate search", plannerText.includes("Day:"));
+  check("planner is gated until a target is chosen (#24)", true);
+
+  // Trends is gated the same way, export included.
+  await page.click('#view-picker .chip[data-view="trends"]');
+  await page.waitForFunction(
+    () => document.querySelector("#trends")?.textContent?.includes("Pick a target to see best times"),
+    null,
+    { timeout: 10000 },
+  );
+  check("trends is gated until a target is chosen (#24)", true);
+  check("no bulk export while gated", (await page.locator("#export-all").count()) === 0);
+  await page.click('#view-picker .chip[data-view="planner"]');
+
+  // #22: × is visible with text in the field; clicking clears the text
+  // but keeps the loaded place.
+  const clearVisible = await page.evaluate(() => {
+    const b = document.querySelector("#clear-btn");
+    return b.classList.contains("show") && getComputedStyle(b).visibility === "visible";
+  });
+  check("clear (×) shows when the field has text (#22)", clearVisible);
+  await page.click("#clear-btn");
+  check("× clears the text", (await page.inputValue("#place-search")) === "");
   check(
-    "planner shows slots or the no-window note",
-    (await page.locator("#planner .slot").count()) > 0 || plannerText.includes("No window"),
+    "× does not unload the place (status keeps the applied label)",
+    ((await page.textContent("#search-status")) ?? "").includes("27.9506"),
+  );
+  const clearHidden = await page.evaluate(
+    () => getComputedStyle(document.querySelector("#clear-btn")).visibility === "hidden",
+  );
+  check("× hides again once the field is empty", clearHidden);
+
+  // Choose a target → hero + slots + enrichment populate (#28).
+  await page.selectOption("#target", "redfish");
+  await page.waitForSelector("#plan-side .hero", { timeout: 20000 });
+  check("band hero renders (#28)", (await page.locator("#plan-side .hero").count()) === 1);
+  const heroText = (await page.textContent("#plan-side .hero")) ?? "";
+  check(
+    "hero shows a rating band word",
+    ["Excellent", "Good", "Fair", "Poor", "Don't go"].some((w) => heroText.includes(w)),
+  );
+  check("hero shows the best-window pill", heroText.includes("Best window") || heroText.includes("No window"));
+  check(
+    "hero ghosts the redfish stencil",
+    ((await page.getAttribute(".hero-stencil", "src")) ?? "").includes("stencil-redfish"),
+  );
+  const plannerText = (await page.textContent("#planner")) ?? "";
+  check(
+    "planner shows slot cards or the no-window note",
+    (await page.locator("#planner .slot2").count()) > 0 || plannerText.includes("No window"),
   );
   check("planner offers calendar export", (await page.locator("#export-day").count()) === 1);
+  check("hour-by-hour strip renders 24 bars", (await page.locator(".hourly .bar").count()) === 24);
+  check("week at a glance renders 7 days", (await page.locator(".wk-day").count()) === 7);
+  check("area cards render (Coming up / gauge / red tide)", (await page.locator("#plan-cards .acard").count()) === 3);
+  check("day details render as tiles at this width", (await page.locator("#planner .tile").count()) >= 4);
+
+  // #26: print menu exists; the beforeprint path renders a Day sheet.
+  check("print button exists (#26)", (await page.locator("#print-btn").count()) === 1);
+  await page.click("#print-btn");
+  await page.waitForSelector("#print-menu:not([hidden])", { timeout: 8000 });
+  check("print menu opens with day/week/month", (await page.locator("#print-menu button").count()) === 3);
+  await page.click("#print-btn"); // close again without printing
+  await page.evaluate(() => window.dispatchEvent(new Event("beforeprint")));
+  const printText = (await page.textContent("#print-root")) ?? "";
+  check("print sheet carries the header + day rating", printText.includes("Zero Light") && printText.includes("Day rating:"));
+  check("print sheet carries Best windows", printText.includes("Best windows"));
+  check(
+    "print sheet carries the guidance footer",
+    printText.includes("planning guidance only") && printText.includes("official sources"),
+  );
+  await page.emulateMedia({ media: "print" });
+  check(
+    "print media shows the sheet and hides the app",
+    (await page.locator("#print-root").isVisible()) &&
+      (await page.evaluate(() => getComputedStyle(document.querySelector(".container")).display === "none")),
+  );
+  await page.emulateMedia({ media: "screen" });
 
   // Trends populates with 30 day blocks.
   await page.click('#view-picker .chip[data-view="trends"]');
@@ -236,14 +359,26 @@ try {
   check("trends renders 30 day blocks", (await page.locator("#trends .day-block").count()) >= 30);
   check("trends offers bulk export", (await page.locator("#export-all").count()) === 1);
 
-  // Day detail modal opens from a trends cell.
+  // Day detail modal opens from a trends cell (below 75em).
   await page.click("#trends .day-block >> nth=2");
   await page.waitForSelector("#day-modal:not([hidden])", { timeout: 8000 });
   check("day modal opens", await page.locator("#day-modal").isVisible());
-  check("day modal has Plan this day", (await page.locator("#plan-this-day").count()) === 1);
+  check("day modal has Plan this day", (await page.locator("#day-modal .plan-this-day").count()) === 1);
   await page.click('#day-modal .modal-close');
 
-  // Settings modal — v0.3.0: key/endpoint fields are GONE (#20).
+  // At desktop width the same click fills the side panel instead (#28).
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.click("#trends .day-block >> nth=3");
+  await page.waitForFunction(
+    () => document.querySelector("#day-panel")?.textContent?.includes("Day:"),
+    null,
+    { timeout: 8000 },
+  );
+  check("desktop trends uses the side panel, not the modal", await page.locator("#day-modal").isHidden());
+  await page.setViewportSize({ width: 1000, height: 850 });
+
+  // Settings modal — v0.3.0: key/endpoint fields are GONE (#20);
+  // #25 adds the theme chips.
   await page.click("#settings-btn");
   await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
   check("settings modal opens", await page.locator("#settings-modal").isVisible());
@@ -251,7 +386,21 @@ try {
   check("settings has no NCEI token field", (await page.locator("#ncei-token").count()) === 0);
   check("settings has no cache endpoint field", (await page.locator("#cache-endpoint").count()) === 0);
   check("settings keeps export toggles", (await page.locator("#export-typical").count()) === 1);
-  await page.click('#settings-modal .modal-close');
+  check("settings has the three theme chips (#25)", (await page.locator("#theme-picker .chip").count()) === 3);
+  await page.click('#theme-picker .chip[data-theme-pref="dark"]');
+  await page.click("#save-settings");
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "dark", null, { timeout: 5000 });
+  check("choosing Dark applies the dark theme", true);
+  check(
+    "theme persists to localStorage",
+    (await page.evaluate(() => localStorage.getItem("zl_theme"))) === "dark",
+  );
+  await page.click("#settings-btn");
+  await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+  await page.click('#theme-picker .chip[data-theme-pref="device"]');
+  await page.click("#save-settings");
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "light", null, { timeout: 5000 });
+  check("Follow device restores the device theme (light here)", true);
 
   // ⓘ menu (#18): How ratings work + About & credits.
   await page.click("#info-btn");
@@ -259,7 +408,7 @@ try {
   check("info menu opens from the ⓘ", await page.locator("#info-menu").isVisible());
   await page.click("#menu-how");
   await page.waitForSelector("#info-modal:not([hidden])", { timeout: 8000 });
-  const infoText = await page.textContent("#info-modal");
+  const infoText = (await page.textContent("#info-modal")) ?? "";
   check("explainer explains pressure cap", infoText.includes("Pressure trend"));
   check("explainer states solunar zero rule", infoText.includes("ZERO"));
   await page.click('#info-modal .modal-close');
@@ -268,11 +417,13 @@ try {
   await page.waitForSelector("#info-menu:not([hidden])", { timeout: 8000 });
   await page.click("#menu-about");
   await page.waitForSelector("#about-modal:not([hidden])", { timeout: 8000 });
-  const aboutText = await page.textContent("#about-modal");
+  const aboutText = (await page.textContent("#about-modal")) ?? "";
   check("about credits Geoapify", aboutText.includes("Geoapify"));
   check("about credits OpenStreetMap", aboutText.includes("OpenStreetMap"));
   check("about carries the settled disclaimer", aboutText.includes("planning guidance only"));
   check("about carries All Rights Reserved", aboutText.includes("All Rights Reserved"));
+  check("about has the Using Zero Light section (#27)", aboutText.includes("Using Zero Light"));
+  check("about shows both lockup colorways (#29)", (await page.locator("#about-modal .about-lockup").count()) === 2);
   await page.click('#about-modal .modal-close');
 
   // Ambiguous place name → confirm pick list (#17).
@@ -310,18 +461,15 @@ try {
   );
   check("geolocation applies with a place label", true);
 
-  // Last location persists across reload (#17).
+  // Last location AND last target persist across reload (#17 + #24).
   await page.reload({ waitUntil: "load" });
-  await page.waitForFunction(
-    () => document.querySelector("#planner")?.textContent?.includes("Day:"),
-    null,
-    { timeout: 20000 },
-  );
-  check("last location auto-loads after reload", true);
+  await page.waitForSelector("#plan-side .hero", { timeout: 20000 });
+  check("last location + target auto-load after reload", true);
   check(
     "search box restored to the saved label",
     (await page.inputValue("#place-search")).includes("Tampa"),
   );
+  check("target restored to redfish (#24)", (await page.inputValue("#target")) === "redfish");
 } catch (err) {
   console.log("ERROR", err.message);
   failures.push("exception: " + err.message);

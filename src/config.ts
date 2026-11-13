@@ -14,12 +14,22 @@ export const CACHE_ENDPOINT = "https://zero-light-cache.wf-robot-muse.workers.de
 const KEYS = {
   includeTypical: "zl_export_typical",
   includeDontGo: "zl_export_dontgo",
+  theme: "zl_theme",
 } as const;
+
+/** Theme preference (#25). "device" = Follow device (default). The persisted
+ *  value is re-validated on load against exactly these three values
+ *  (input-security rule, Wade 2026-11-12); anything else falls back to
+ *  "device". */
+export type ThemePref = "device" | "light" | "dark";
+export const THEME_PREFS: readonly ThemePref[] = ["device", "light", "dark"];
 
 export interface AppSettings {
   /** Calendar export toggles (item #12) — both default OFF. */
   includeTypical: boolean;
   includeDontGo: boolean;
+  /** Theme (#25): Follow device / Light / Dark. */
+  theme: ThemePref;
 }
 
 function get(k: string): string {
@@ -40,15 +50,37 @@ function set(k: string, v: string): void {
 }
 
 export function loadSettings(): AppSettings {
+  const rawTheme = get(KEYS.theme);
   return {
     includeTypical: get(KEYS.includeTypical) === "1",
     includeDontGo: get(KEYS.includeDontGo) === "1",
+    theme: (THEME_PREFS as readonly string[]).includes(rawTheme)
+      ? (rawTheme as ThemePref)
+      : "device",
   };
 }
 
 export function saveSettings(s: AppSettings): void {
   set(KEYS.includeTypical, s.includeTypical ? "1" : "");
   set(KEYS.includeDontGo, s.includeDontGo ? "1" : "");
+  set(KEYS.theme, s.theme);
+}
+
+// ------------------------------------------------------- last target (#24)
+// The last-used target is remembered on this device only. The stored id is
+// validated by the caller against the current TARGETS list; an id that no
+// longer exists is ignored (the "Choose a target…" placeholder shows).
+
+const TARGET_KEY = "zl_last_target";
+
+export function loadLastTargetId(): string {
+  const v = get(TARGET_KEY);
+  // Ids are short slugs; reject anything that is not slug-shaped outright.
+  return /^[a-z0-9-]{1,40}$/.test(v) ? v : "";
+}
+
+export function saveLastTargetId(id: string): void {
+  set(TARGET_KEY, id);
 }
 
 // ------------------------------------------------------- last location
