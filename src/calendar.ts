@@ -53,7 +53,10 @@ function slotTitle(day: ExportDay, slot: Slot): string {
 }
 
 function slotDescription(day: ExportDay, slot: Slot): string {
-  return `${slot.reason}. Day verdict: ${day.plan.verdict}. Planned with Zero Light.`;
+  // #42: the held-back reason rides in every calendar description (the
+  // .ics routes and the Google/Outlook add links share this builder).
+  const held = day.plan.heldBackBy ? ` Day held back by: ${day.plan.heldBackBy}.` : "";
+  return `${slot.reason}.${held} Day verdict: ${day.plan.verdict}. Planned with Zero Light.`;
 }
 
 export function buildIcs(days: ExportDay[], opts: { includeTypical: boolean; includeDontGo: boolean }): string {
@@ -81,6 +84,22 @@ export function buildIcs(days: ExportDay[], opts: { includeTypical: boolean; inc
       );
       continue;
     }
+    // #42 (Wade's addition): a held-back day with no rated window still
+    // exports — one all-day event mirroring the Don't-go pattern. Not
+    // gated by the typical/Don't-go toggles (decided at lock time).
+    if (!day.plan.typical && day.plan.heldBackBy && day.plan.slots.length === 0) {
+      lines.push(
+        "BEGIN:VEVENT",
+        `UID:heldback-${day.plan.dateKey}-${n++}@zerolight`,
+        `DTSTAMP:${stamp}`,
+        `DTSTART;VALUE=DATE:${icsDate(day.date)}`,
+        `DTEND;VALUE=DATE:${icsDate(new Date(day.date.getTime() + 86400_000))}`,
+        `SUMMARY:${escIcs(`Held back — ${day.targetName} (${day.locationName})`)}`,
+        `DESCRIPTION:${escIcs(`Day held back by: ${day.plan.heldBackBy}. Day verdict: ${day.plan.verdict}. Planned with Zero Light.`)}`,
+        "END:VEVENT",
+      );
+      continue;
+    }
     for (const slot of day.plan.slots) {
       const title = day.plan.typical ? `Typical day (estimate) — ${slotTitle(day, slot)}` : slotTitle(day, slot);
       lines.push(
@@ -102,6 +121,20 @@ export function buildIcs(days: ExportDay[], opts: { includeTypical: boolean; inc
 
 export function downloadIcs(days: ExportDay[], opts: { includeTypical: boolean; includeDontGo: boolean }): void {
   const blob = new Blob([buildIcs(days, opts)], { type: "text/calendar" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "zero-light-plans.ics";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+/** #43: the per-slot "Apple / .ics" entry — a one-event .ics download for
+ *  exactly this slot, parallel to the Google/Outlook per-slot links.
+ *  Reuses buildIcs so the title/description match the other routes. */
+export function downloadSlotIcs(day: ExportDay, slot: Slot): void {
+  const one: ExportDay = { ...day, plan: { ...day.plan, slots: [slot] } };
+  const blob = new Blob([buildIcs([one], { includeTypical: true, includeDontGo: true })], { type: "text/calendar" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

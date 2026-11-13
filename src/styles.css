@@ -157,6 +157,13 @@ button:hover { border-color: var(--accent); }
 .verdict-dontgo { background: var(--v-dontgo-bg); color: var(--v-dontgo-fg); }
 
 .held-back { margin-top: 14px; font-weight: 600; color: #b26a00; }
+/* #42: held-back reason as an amber banner directly under the verdict. */
+.held-back-banner {
+  margin: 12px 0 14px; padding: 9px 12px; font-weight: 600;
+  color: #8a5200; background: #fdf3d7;
+  border: 1px solid #e3b93e; border-left: 5px solid #e3b93e; border-radius: 8px;
+}
+[data-theme="dark"] .held-back-banner { color: #f0d48a; background: #3a2f10; border-color: #8a6d1f; }
 [data-theme="dark"] .held-back { color: #e8c96a; }
 .astro { margin-top: 10px; }
 
@@ -230,7 +237,7 @@ button:hover { border-color: var(--accent); }
 .sk-day { border: 1px solid var(--border); border-radius: 10px; padding: 10px; height: 96px; }
 .sk-tile { min-height: 62px; }
 .sk-acard { display: flex; flex-direction: column; }
-.sk-dblock { flex: 1 1 44px; max-width: 78px; min-height: 52px; border-radius: 10px; background: var(--sk); }
+.sk-dblock { min-height: 52px; min-width: 0; border-radius: 10px; background: var(--sk); }
 
 /* ---- search / controls (#17, #22, #27) ---- */
 .controls { padding: 16px 18px; }
@@ -349,7 +356,14 @@ button:hover { border-color: var(--accent); }
 .slot2-reason { color: var(--reason); margin-top: 3px; font-size: 0.95em; }
 .slot-add { font-size: 0.85em; color: var(--muted); }
 .slot-add a { color: var(--accent); }
+/* #43: the per-slot .ics entry is a button wearing link styling. */
+.ics-link {
+  background: none; border: none; padding: 0; font: inherit;
+  color: var(--accent); text-decoration: underline; cursor: pointer;
+}
 .export-row { margin-top: 14px; }
+/* #44: Trends Week/Month export row sits under the pane heading. */
+.export-row-top { margin: 10px 0 4px; }
 
 /* ---- day details: list (phone) / tiles (wider) ---- */
 .details-sec > h3 { margin-top: 20px; }
@@ -406,9 +420,9 @@ button:hover { border-color: var(--accent); }
 .acard-alert { color: var(--alert); font-weight: 600; }
 
 /* ---- trends ---- */
-.strip { display: flex; flex-wrap: wrap; gap: 5px; }
+.strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }
 .day-block {
-  flex: 1 1 44px; max-width: 78px; min-height: 52px;
+  min-height: 52px; min-width: 0;
   border-radius: 10px; background: var(--card);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   border: 1px solid var(--border); border-top: 5px solid var(--faint);
@@ -451,7 +465,9 @@ button:hover { border-color: var(--accent); }
 }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
 .modal-head .icon-btn { font-size: 1.05em; line-height: 1; }
-.modal-actions { margin-top: 18px; gap: 10px; flex-wrap: wrap; }
+/* #44: the day-detail action row now sits under the verdict (and the
+   #42 banner), with clear space before the first slot. */
+.modal-actions { margin-top: 12px; margin-bottom: 16px; gap: 10px; flex-wrap: wrap; }
 .check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 0.95em; cursor: pointer; }
 #theme-picker { flex-wrap: wrap; }
 
@@ -571,6 +587,12 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
   .preason { color: #000; }
   .pnote { color: #333; }
   .pveto { font-weight: 700; color: #9c1c1c; margin: 6px 0; }
+  /* #42: held-back banner on print sheets. */
+  .pheldback {
+    font-weight: 700; color: #8a5200; background: #fdf3d7;
+    border: 1px solid #e3b93e; border-left: 5px solid #e3b93e; border-radius: 6px;
+    padding: 6px 9px; margin: 6px 0;
+  }
   .pnone { margin: 6px 0; }
   .pstatus {
     padding: 5px 9px; border-radius: 4px; margin: 0 0 6px;

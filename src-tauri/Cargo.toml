@@ -1,6 +1,6 @@
 [package]
 name = "zero-light"
-version = "0.4.4"
+version = "0.4.5"
 description = "Zero Light - best times to hunt and fish by location"
 authors = ["WF-Robot Muse"]
 edition = "2021"

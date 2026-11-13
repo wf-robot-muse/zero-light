@@ -79,7 +79,7 @@ import {
   type UsgsReading,
   type PlaceCandidate,
 } from "./extras";
-import { downloadIcs, googleUrl, outlookUrl, type ExportDay } from "./calendar";
+import { downloadIcs, downloadSlotIcs, googleUrl, outlookUrl, type ExportDay } from "./calendar";
 
 /** The one selected place (item #17). null = nothing selected yet —
  *  the app sits at its "enter a location" first-run state. */
@@ -298,9 +298,30 @@ function forecastKeys(): string[] {
 function slotAddLinks(day: ExportDay, slotIdx: number): string {
   const slot = day.plan.slots[slotIdx];
   if (!slot) return "";
+  // #43: "Apple / .ics" first — not a link but a link-styled button that
+  // downloads a one-slot .ics on click (wired after render).
   return `<span class="slot-add">Add:
+    <button type="button" class="ics-link slot-ics" data-slot="${slotIdx}">Apple / .ics</button> ·
     <a href="${googleUrl(day, slot)}" target="_blank" rel="noopener">Google</a> ·
     <a href="${outlookUrl(day, slot)}" target="_blank" rel="noopener">Outlook</a></span>`;
+}
+
+/** #43: wire every per-slot .ics download button under a rendered root. */
+function wireSlotIcs(root: ParentNode, day: ExportDay): void {
+  root.querySelectorAll<HTMLElement>(".slot-ics").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const slot = day.plan.slots[parseInt(btn.dataset.slot ?? "", 10)];
+      if (slot) downloadSlotIcs(day, slot);
+    });
+  });
+}
+
+/** #42: the held-back reason as an amber banner, shown immediately under
+ *  the day's verdict on every screen view. Empty for veto days (the
+ *  Don't-go message already carries the reason) and unheld days. */
+function heldBackBannerHtml(plan: DayPlan): string {
+  if (!plan.heldBackBy || plan.veto) return "";
+  return `<p class="held-back-banner"><span class="hb-icon" aria-hidden="true">⚠</span> Day held back by: ${esc(plan.heldBackBy)}.</p>`;
 }
 
 // ------------------------------------------------------------- planner (#28)
@@ -646,22 +667,23 @@ function renderPlanner(): void {
     .join("");
 
   el.innerHTML = `
+    ${heldBackBannerHtml(plan)}
     ${slotCardHtml(day, plan)}
+    <div class="row export-row">
+      <button type="button" id="export-day">Export this day (.ics)</button>
+    </div>
     <section class="details-sec">
       <h3>Day details — ${esc(target.name)}</h3>
       <div class="det2">${listHtml}</div>
       <div class="dettiles">${tilesHtml}</div>
-      ${plan.heldBackBy ? `<p class="held-back">Day held back by: ${esc(plan.heldBackBy)}.</p>` : ""}
       ${extras.map((x) => `<p class="note">${x}</p>`).join("")}
       <p class="note astro">
         Moonrise ${plan.astro.moonrise ? fmtTime(plan.astro.moonrise) : "—"} · Moonset ${plan.astro.moonset ? fmtTime(plan.astro.moonset) : "—"}
         ${state.weather?.timezone ? `· Times in ${esc(state.weather.timezone.replace("_", " "))}` : ""}
         ${plan.typical ? "· Typical-day estimate (no forecast for this date)" : ""}
       </p>
-      <div class="row export-row">
-        <button type="button" id="export-day">Export this day (.ics)</button>
-      </div>
     </section>`;
+  wireSlotIcs(el, day);
   el.querySelectorAll<HTMLElement>(".wk-day").forEach((b) =>
     b.addEventListener("click", () => jumpToDay(parseInt(b.dataset.offset ?? "0", 10))),
   );
@@ -749,6 +771,10 @@ function renderTrends(): void {
     <div class="trends-layout">
     <section class="card trends-main">
       <h2>Viability trends</h2>
+      <div class="row export-row export-row-top">
+        <button type="button" id="export-week">Export week (.ics)</button>
+        <button type="button" id="export-month">Export month (.ics)</button>
+      </div>
       ${blocks.join("")}
       ${chips}
       <p class="note legend">Day bands, from the day's best hour: <strong>Excellent</strong> 78+ ·
@@ -758,21 +784,23 @@ function renderTrends(): void {
       Paler blocks are <strong>typical for this date</strong> — scored from astronomy and
       season${state.normals ? " plus climate normals" : ""}, not a forecast.
       Hover a day for a summary; click it for full detail.</p>
-      <div class="row export-row">
-        <button type="button" id="export-all">Export forecast days (.ics)</button>
-      </div>
     </section>
     <aside id="day-panel" class="card day-panel">${skDayPanelHtml()}
     </aside>
     </div>`;
 
-  $("#export-all").addEventListener("click", () => {
-    const days = forecastKeys().map((k) => exportDayFor(k));
+  // #44: separate Week / Month exports for the strip ranges, replacing
+  // the old all-forecast-days button. The Settings toggles govern
+  // typical / Don't-go inclusion, as with every other export (#12).
+  const exportRange = (count: number) => {
+    const days = Array.from({ length: count }, (_, i) => exportDayFor(addDaysKey(start, i)));
     downloadIcs(days, {
       includeTypical: state.settings.includeTypical,
       includeDontGo: state.settings.includeDontGo,
     });
-  });
+  };
+  $("#export-week").addEventListener("click", () => exportRange(7));
+  $("#export-month").addEventListener("click", () => exportRange(30));
 
   const tooltip = $("#tooltip");
   el.querySelectorAll<HTMLElement>(".day-block").forEach((cell) => {
@@ -852,8 +880,12 @@ function dayDetailHtml(key: string): string {
       : `<p class="note">No window reached the Okay level this day.</p>`;
   return `
     <div class="verdict verdict-${bandKey(plan)}">Day: ${bandWord(plan).toUpperCase()}</div>
+    ${heldBackBannerHtml(plan)}
+    <div class="row modal-actions">
+      <button type="button" class="plan-this-day">Plan this day</button>
+      <button type="button" class="export-this-day">Export this day (.ics)</button>
+    </div>
     ${slotsHtml}
-    ${plan.heldBackBy && !plan.veto ? `<p class="held-back">Day held back by: ${esc(plan.heldBackBy)}.</p>` : ""}
     ${
       hours.length
         ? `<p class="note">Weather: high ${Math.round(Math.max(...hours.map((h) => h.tempF)))}°F ·
@@ -865,11 +897,7 @@ function dayDetailHtml(key: string): string {
     <p class="note">Sunrise ${fmtTime(plan.astro.sunrise)} · Sunset ${fmtTime(plan.astro.sunset)} ·
     Moonrise ${plan.astro.moonrise ? fmtTime(plan.astro.moonrise) : "—"} · Moonset ${plan.astro.moonset ? fmtTime(plan.astro.moonset) : "—"} ·
     Moon ${Math.round(plan.astro.moonIllumination * 100)}% lit · Solunar major ${fmtTime(plan.solunarMajor.start)} – ${fmtTime(plan.solunarMajor.end)} (annotation only)</p>
-    ${tideHtml}
-    <div class="row modal-actions">
-      <button type="button" class="plan-this-day">Plan this day</button>
-      <button type="button" class="export-this-day">Export this day (.ics)</button>
-    </div>`;
+    ${tideHtml}`;
 }
 
 function wireDayDetail(root: HTMLElement, key: string): void {
@@ -890,6 +918,7 @@ function wireDayDetail(root: HTMLElement, key: string): void {
         includeDontGo: state.settings.includeDontGo,
       });
     });
+  wireSlotIcs(root, exportDayFor(key));
 }
 
 /** #28: at desktop widths the Trends day detail opens in a side panel;
@@ -1352,6 +1381,14 @@ function printDayFigs(key: string): { hi: string; lo: string; wind: string; rain
   };
 }
 
+/** #42: the held-back banner for print sheets, under each day's
+ *  rating/status line. Veto days carry the reason in their Don't-go
+ *  line instead; typical days never have a held-back reason. */
+function printHeldBackHtml(plan: DayPlan): string {
+  if (!plan.heldBackBy || plan.veto) return "";
+  return `<div class="pheldback">⚠ Day held back by: ${esc(plan.heldBackBy)}.</div>`;
+}
+
 function printDayBlock(key: string, compact: boolean): string {
   const plan = planForKey(key);
   const figs = printDayFigs(key);
@@ -1361,6 +1398,7 @@ function printDayBlock(key: string, compact: boolean): string {
     return `
     <div class="pcblock">
       <div class="pstatus pband-${bandKey(plan)}"><strong>${esc(fmtDay(key))} — ${esc(band)}</strong> · ${figsLine}${plan.typical ? " (typical-day estimate)" : ""}</div>
+      ${printHeldBackHtml(plan)}
       ${plan.veto ? `<div class="pveto">Don't go — ${esc(plan.veto)}</div>` : ""}
       ${!plan.veto && plan.slots.length ? plan.slots.map((s) => printSlotLine(s, true)).join("") : ""}
       ${!plan.veto && !plan.slots.length ? `<div class="pnone">No window rated Okay or better.</div>` : ""}
@@ -1371,6 +1409,7 @@ function printDayBlock(key: string, compact: boolean): string {
   <div class="pdayblock">
     <h3 class="pstatus pband-${bandKey(plan)}">${esc(fmtDay(key))} — ${esc(band)}</h3>
     <div class="pdataline">Best window ${esc(best)} · ${figsLine}${plan.typical ? " · Typical-day estimate" : ""}</div>
+    ${printHeldBackHtml(plan)}
     ${plan.veto ? `<div class="pveto">Don't go — ${esc(plan.veto)}</div>` : ""}
     ${!plan.veto && plan.slots.length ? plan.slots.map((s) => printSlotLine(s)).join("") : ""}
     ${!plan.veto && !plan.slots.length ? `<div class="pnone">No window rated Okay or better.</div>` : ""}
@@ -1418,6 +1457,7 @@ function renderPrint(mode: PrintMode): void {
     body = `
     ${printHeaderHtml("Day view", fmtDay(key))}
     <h2>Day rating: ${esc(bandWord(plan))}</h2>
+    ${printHeldBackHtml(plan)}
     ${plan.veto ? `<p class="pveto">Don't go — ${esc(plan.veto)}</p>` : ""}
     ${plan.typical ? `<p class="pnote">Typical-day estimate — no forecast exists for this date yet.</p>` : ""}
     <table class="pkv">${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
@@ -1790,7 +1830,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.4";
+  let versionLabel = "Zero Light 0.4.5";
   try {
     versionLabel = await invoke<string>("app_info");
   } catch {

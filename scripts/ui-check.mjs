@@ -309,7 +309,7 @@ try {
     { timeout: 10000 },
   );
   check("trends is gated until a target is chosen (#24)", true);
-  check("no bulk export while gated", (await page.locator("#export-all").count()) === 0);
+  check("no week/month export while gated (#44)", (await page.locator("#export-week").count()) === 0 && (await page.locator("#export-month").count()) === 0);
   await page.click('#view-picker .chip[data-view="planner"]');
 
   // #22: × is visible with text in the field; clicking clears the text
@@ -350,6 +350,19 @@ try {
     (await page.locator("#planner .slot2").count()) > 0 || plannerText.includes("No window"),
   );
   check("planner offers calendar export", (await page.locator("#export-day").count()) === 1);
+  check(
+    "planner export sits above the day details (#44)",
+    await page.evaluate(() => {
+      const b = document.querySelector("#export-day");
+      const d = document.querySelector("#planner .details-sec");
+      return !!b && !!d && (b.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    }),
+  );
+  check(
+    "slot add row leads with the Apple / .ics button (#43)",
+    (await page.locator("#planner .slot-ics").count()) > 0 &&
+      ((await page.textContent("#planner .slot-add")) ?? "").includes("Apple / .ics"),
+  );
   check("hour-by-hour strip renders 24 bars", (await page.locator(".hourly .bar").count()) === 24);
   check("week at a glance renders 7 days", (await page.locator(".wk-day").count()) === 7);
   check("area cards render (Coming up / gauge / red tide)", (await page.locator("#plan-cards .acard").count()) === 3);
@@ -386,13 +399,23 @@ try {
     { timeout: 15000 },
   );
   check("trends renders 30 day blocks", (await page.locator("#trends .day-block").count()) >= 30);
-  check("trends offers bulk export", (await page.locator("#export-all").count()) === 1);
+  check("trends offers week + month export, old button gone (#44)", (await page.locator("#export-week").count()) === 1 && (await page.locator("#export-month").count()) === 1 && (await page.locator("#export-all").count()) === 0);
 
   // Day detail modal opens from a trends cell (below 75em).
   await page.click("#trends .day-block >> nth=2");
   await page.waitForSelector("#day-modal:not([hidden])", { timeout: 8000 });
   check("day modal opens", await page.locator("#day-modal").isVisible());
   check("day modal has Plan this day", (await page.locator("#day-modal .plan-this-day").count()) === 1);
+  check(
+    "day modal actions sit above the slots (#44)",
+    await page.evaluate(() => {
+      const a = document.querySelector("#day-modal .modal-actions");
+      const s = document.querySelector("#day-modal .slot2");
+      if (!a) return false;
+      if (!s) return true;
+      return (a.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    }),
+  );
   await page.click('#day-modal .modal-close');
 
   // At desktop width the same click fills the side panel instead (#28).
