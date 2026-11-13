@@ -83,6 +83,25 @@ export function saveLastTargetId(id: string): void {
   set(TARGET_KEY, id);
 }
 
+// ------------------------------------------------------- base map (#37)
+// The chosen map base layer is remembered on this device only. The
+// persisted value is re-validated on load against exactly the three
+// known layer ids (input-security rule, Wade 2026-11-12); anything
+// else falls back to the standard map.
+
+export type BaseMapId = "map" | "satellite" | "topo";
+export const BASE_MAP_IDS: readonly BaseMapId[] = ["map", "satellite", "topo"];
+const BASE_MAP_KEY = "zl_base_map";
+
+export function loadBaseMapId(): BaseMapId {
+  const v = get(BASE_MAP_KEY);
+  return (BASE_MAP_IDS as readonly string[]).includes(v) ? (v as BaseMapId) : "map";
+}
+
+export function saveBaseMapId(id: BaseMapId): void {
+  set(BASE_MAP_KEY, id);
+}
+
 // ------------------------------------------------------- last location
 // Item #17: the user's selected location is per-user data — it is kept
 // ONLY on this device, never in the shared Layer 2 cache. It is

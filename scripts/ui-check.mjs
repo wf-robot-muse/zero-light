@@ -1,5 +1,5 @@
 // UI regression check (next-build item #6; extended for v0.3.0 #17/#18/#20,
-// v0.4.0 #22–#29, v0.4.1 #30, and v0.4.2 #32).
+// v0.4.0 #22–#29, v0.4.1 #30, v0.4.2 #32, and v0.4.3 #33–#37).
 //
 // The v0.1.0 startup bug passed the engine-only smoke test (24/24)
 // because nothing ever rendered the app. This check serves the built
@@ -233,10 +233,10 @@ try {
     }),
   );
   check(
-    "tagline sits under the header lockup (#30)",
+    "tagline sits under the header row (#33)",
     await page.evaluate(() => {
       const img = document.querySelector("#brand-lockup-light");
-      const sub = document.querySelector(".brand .subtitle");
+      const sub = document.querySelector(".topbar .subtitle");
       if (!img || !sub) return false;
       return sub.getBoundingClientRect().top >= img.getBoundingClientRect().bottom - 1;
     }),
@@ -358,7 +358,8 @@ try {
   await page.click("#print-btn"); // close again without printing
   await page.evaluate(() => window.dispatchEvent(new Event("beforeprint")));
   const printText = (await page.textContent("#print-root")) ?? "";
-  check("print sheet carries the header + day rating", printText.includes("Zero Light") && printText.includes("Day rating:"));
+  check("print sheet carries the header + day rating", printText.includes("Day rating:"));
+  check("print header uses the cropped logo, not text (#36)", (await page.locator("#print-root .plogo img").count()) >= 1);
   check("print sheet carries Best windows", printText.includes("Best windows"));
   check(
     "print sheet carries the guidance footer",
@@ -520,51 +521,157 @@ try {
   );
   check("target restored to redfish (#24)", (await page.inputValue("#target")) === "redfish");
 
-  // #32 (L2 header): the icon row sits on its own row above the lockup,
-  // and the lockup width follows the tier rule — fluid (100% of the
-  // brand width) on phone, 400px at tablet width, 440px at Expanded,
-  // and 100% of the rail width again on desktop. Measured widths are
-  // logged for the record.
+  // #33: inline header — the lockup shares one row with the icon
+  // buttons at the locked widths (230 phone / 270 tablet / 290
+  // expanded / 230 rail; 200 under a 375px viewport), the tagline
+  // sits tight under the row, and nothing overflows horizontally.
   const lockupGeom = async (w) => {
     await page.setViewportSize({ width: w, height: 850 });
     await page.waitForTimeout(250);
     return page.evaluate(() => {
       const img = document.querySelector("#brand-lockup-light");
-      const brand = document.querySelector(".brand");
       const row = document.querySelector(".icon-row");
-      if (!img || !brand || !row) return null;
+      const sub = document.querySelector(".subtitle");
+      if (!img || !row || !sub) return null;
       const ir = img.getBoundingClientRect();
+      const rr = row.getBoundingClientRect();
       return {
         lockup: ir.width,
         lockupTop: ir.top,
-        brand: brand.getBoundingClientRect().width,
-        rowBottom: row.getBoundingClientRect().bottom,
+        lockupBottom: ir.bottom,
+        rowTop: rr.top,
+        rowBottom: rr.bottom,
+        subTop: sub.getBoundingClientRect().top,
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
       };
     });
   };
   const g390 = await lockupGeom(390);
-  console.log(`  #32 measured @390: lockup=${g390?.lockup.toFixed(1)} brand=${g390?.brand.toFixed(1)}`);
+  console.log(`  #33 measured @390: lockup=${g390?.lockup.toFixed(1)} overflow=${g390?.overflow}`);
+  check("phone: lockup is 230px (#33)", !!g390 && Math.abs(g390.lockup - 230) <= 3);
   check(
-    "phone: lockup fills the content width (#32)",
-    !!g390 && Math.abs(g390.lockup - g390.brand) <= 2 && g390.brand > 300,
+    "phone: icons share the lockup row (#33)",
+    !!g390 && g390.rowTop >= g390.lockupTop - 2 && g390.rowBottom <= g390.lockupBottom + 2,
   );
+  check("phone: tagline tight under the header (#33)", !!g390 && g390.subTop - g390.lockupBottom <= 4);
+  check("phone: no horizontal overflow (#33)", !!g390 && g390.overflow <= 0);
+  const g360 = await lockupGeom(360);
   check(
-    "icon row sits above the lockup (#32)",
-    !!g390 && g390.rowBottom <= g390.lockupTop + 1,
+    "narrow phone: lockup steps down to 200px, no overflow (#33)",
+    !!g360 && Math.abs(g360.lockup - 200) <= 3 && g360.overflow <= 0,
   );
   const g820 = await lockupGeom(820);
-  console.log(`  #32 measured @820: lockup=${g820?.lockup.toFixed(1)}`);
-  check("tablet: lockup is 400px (#32)", !!g820 && Math.abs(g820.lockup - 400) <= 2);
+  check("tablet: lockup is 270px (#33)", !!g820 && Math.abs(g820.lockup - 270) <= 2);
   const g1024 = await lockupGeom(1024);
-  console.log(`  #32 measured @1024: lockup=${g1024?.lockup.toFixed(1)}`);
-  check("expanded: lockup is 440px (#32)", !!g1024 && Math.abs(g1024.lockup - 440) <= 2);
+  check("expanded: lockup is 290px (#33)", !!g1024 && Math.abs(g1024.lockup - 290) <= 2);
   const g1440 = await lockupGeom(1440);
-  console.log(`  #32 measured @1440: lockup=${g1440?.lockup.toFixed(1)} brand=${g1440?.brand.toFixed(1)}`);
-  check(
-    "desktop: lockup fills the rail width (#32)",
-    !!g1440 && Math.abs(g1440.lockup - g1440.brand) <= 2 && g1440.brand > 300,
-  );
+  check("desktop: lockup is 230px in the rail (#33)", !!g1440 && Math.abs(g1440.lockup - 230) <= 2);
+  check("header carries the refresh icon button (#33)", (await page.locator(".topbar #refresh-btn").count()) === 1);
+  check("no floating Refresh button in the main column (#33)", (await page.locator(".main-col #refresh-btn").count()) === 0);
   await page.setViewportSize({ width: 1000, height: 850 });
+
+  // #35: the info menu hangs from its button (fixed, right-aligned,
+  // 6px below) and opening it changes no document dimensions.
+  await page.click("#info-btn");
+  await page.waitForSelector("#info-menu:not([hidden])");
+  const menuGeom = await page.evaluate(() => {
+    const b = document.querySelector("#info-btn").getBoundingClientRect();
+    const m = document.querySelector("#info-menu");
+    const r = m.getBoundingClientRect();
+    return {
+      pos: getComputedStyle(m).position,
+      topGap: r.top - b.bottom,
+      rightDiff: Math.abs(r.right - b.right),
+      sw: document.documentElement.scrollWidth,
+      iw: window.innerWidth,
+    };
+  });
+  check("info menu is viewport-fixed (#35)", menuGeom.pos === "fixed");
+  check(
+    "info menu hangs 6px under the info button, right-aligned (#35)",
+    Math.abs(menuGeom.topGap - 6) <= 2 && menuGeom.rightDiff <= 2,
+  );
+  check("opening the menu adds no scroll width (#35)", menuGeom.sw <= menuGeom.iw);
+  await page.keyboard.press("Escape");
+
+  // #34: saving settings shows no confirmation message.
+  await page.click("#settings-btn");
+  await page.waitForSelector("#settings-modal:not([hidden])");
+  await page.click("#save-settings");
+  await page.waitForTimeout(200);
+  check(
+    "settings save shows no 'saved' message (#34)",
+    !((await page.textContent("#status")) ?? "").includes("Settings saved"),
+  );
+
+  // #37: map scale + layers controls, base-map persistence, and the
+  // drag-out guard on the map modal.
+  await page.click("#map-btn");
+  await page.waitForSelector(".leaflet-container", { timeout: 10000 });
+  check("map has the scale control (#37)", (await page.locator(".leaflet-control-scale").count()) === 1);
+  check("map has the layers control (#37)", (await page.locator(".leaflet-control-layers").count()) === 1);
+  // The layers list expands on hover, which intercepts a Playwright
+  // click on the toggle; click the Satellite radio directly instead.
+  await page.evaluate(() => {
+    const label = [...document.querySelectorAll(".leaflet-control-layers label")].find((l) =>
+      l.textContent.includes("Satellite"),
+    );
+    label?.querySelector("input")?.click();
+  });
+  await page.waitForTimeout(300);
+  check(
+    "base-map choice persists (#37)",
+    await page.evaluate(() => localStorage.getItem("zl_base_map") === "satellite"),
+  );
+  await page.click(".map-expand-btn");
+  await page.waitForSelector("#map-modal:not([hidden])");
+  const mapBox = await page.evaluate(() => {
+    const r = document.querySelector("#map").getBoundingClientRect();
+    return { cx: r.x + r.width / 2, cy: r.y + r.height / 2 };
+  });
+  await page.mouse.move(mapBox.cx, mapBox.cy);
+  await page.mouse.down();
+  await page.mouse.move(30, 30, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  check(
+    "drag out of the map modal no longer cancels it (#37)",
+    await page.evaluate(() => !document.querySelector("#map-modal").hidden),
+  );
+  await page.mouse.click(30, 30);
+  await page.waitForTimeout(300);
+  check(
+    "a genuine backdrop click still cancels the map modal (#37)",
+    await page.evaluate(() => document.querySelector("#map-modal").hidden),
+  );
+
+  // #33: a fresh profile (no saved place/target) gets skeleton
+  // placeholders in every region, and on desktop the two placeholder
+  // columns end on the same line.
+  const ctx2 = await browser.newContext();
+  const page2 = await ctx2.newPage();
+  await page2.setViewportSize({ width: 1440, height: 1000 });
+  await page2.goto("http://localhost:4173/", { waitUntil: "load" });
+  await page2.waitForSelector(".sk-hero", { timeout: 10000 });
+  check("fresh state shows the hero skeleton (#33)", true);
+  check("fresh state shows 4 slot skeletons (#33)", (await page2.locator(".sk-slot").count()) === 4);
+  check("fresh state shows area skeletons (#33)", (await page2.locator(".sk-acard").count()) === 3);
+  const colGeom = await page2.evaluate(() => {
+    const bottom = (sel) => {
+      const el = document.querySelector(sel);
+      return el ? el.getBoundingClientRect().bottom + window.scrollY : 0;
+    };
+    return { rail: Math.max(bottom("#plan-side"), bottom("#plan-cards")), main: bottom("#planner") };
+  });
+  console.log(`  #33 placeholder columns @1440: rail=${colGeom.rail.toFixed(0)} main=${colGeom.main.toFixed(0)}`);
+  check("desktop placeholders end on the same line (#33)", Math.abs(colGeom.rail - colGeom.main) <= 45);
+  await page2.setViewportSize({ width: 390, height: 900 });
+  await page2.waitForTimeout(250);
+  check(
+    "phone placeholders: no horizontal overflow (#33)",
+    await page2.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  );
+  await ctx2.close();
 } catch (err) {
   console.log("ERROR", err.message);
   failures.push("exception: " + err.message);

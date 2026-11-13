@@ -27,9 +27,12 @@ import {
   saveLastPlace,
   loadLastTargetId,
   saveLastTargetId,
+  loadBaseMapId,
+  saveBaseMapId,
   CACHE_ENDPOINT,
   type AppSettings,
   type ThemePref,
+  type BaseMapId,
 } from "./config";
 // #29/#30 logo masters (assets/logo/). The full lockup ships in two
 // colorways and swaps with the theme; it is the header brand (#30) and
@@ -472,29 +475,107 @@ function jumpToDay(offset: number): void {
   render();
 }
 
+// ---- no-data skeletons (#33): muted blocks mirroring the real
+// regions at their real sizes, so a no-data screen carries the same
+// layout as a loaded one. Enrichment skeletons reuse the .enrich
+// visibility rule (shown from 52.5em up), like the real sections.
+function skHeroHtml(): string {
+  return `
+  <div class="sk-hero" aria-hidden="true">
+    <div class="sk" style="width:55%;height:34px;border-radius:8px"></div>
+    <div class="sk sk-line" style="width:70%"></div>
+    <div class="sk" style="width:45%;height:26px;border-radius:999px;margin-top:16px"></div>
+    <div class="sk sk-line" style="width:52%"></div>
+  </div>`;
+}
+
+function skAreasHtml(): string {
+  const card = (h: number, lines: string[]) =>
+    `<div class="acard sk-acard" style="height:${h}px"><div class="sk" style="width:38%;height:12px"></div>${lines.map((w) => `<div class="sk sk-line" style="width:${w}"></div>`).join("")}</div>`;
+  return `
+  <div class="area-cards enrich" aria-hidden="true">
+    ${card(150, ["82%", "82%", "82%"])}
+    ${card(92, ["76%", "58%"])}
+    ${card(92, ["80%", "52%"])}
+  </div>`;
+}
+
+function skMainHtml(prompt: string): string {
+  const slot = `<div class="sk-slot"><div class="sk" style="width:38%;height:15px"></div><div class="sk sk-line" style="width:82%"></div><div class="sk sk-line" style="width:55%"></div><div class="sk sk-line" style="width:42%"></div></div>`;
+  const heights = [45, 45, 80, 85, 50, 52, 62, 66, 88, 82, 55, 84, 86, 52, 58, 60, 70, 75, 68, 55, 72, 74, 58, 64];
+  const bars = heights.map((h) => `<i style="height:${h}%"></i>`).join("");
+  const day = `<div class="sk-day"><div class="sk" style="width:60%;height:11px"></div><div class="sk" style="width:45%;height:17px;margin-top:8px"></div><div class="sk sk-line" style="width:75%"></div></div>`;
+  const tile = (w2: string, span = "") =>
+    `<div class="tile sk-tile" ${span}><div class="sk" style="width:55%;height:11px"></div><div class="sk" style="width:${w2};height:15px;margin-top:8px"></div></div>`;
+  const listRow = `<div class="det2-row"><div class="sk" style="width:32%;height:13px"></div><div class="sk" style="width:22%;height:13px"></div></div>`;
+  return `
+  <section class="card empty-state"><p>${prompt}</p></section>
+  <div aria-hidden="true">
+    <div class="slotgrid" style="margin-top:14px">${slot.repeat(4)}</div>
+    <div class="sk" style="width:180px;height:13px;margin-top:14px"></div>
+    <section class="enrich">
+      <div class="sk" style="width:130px;height:15px;margin:20px 0 8px"></div>
+      <div class="sk-strip" style="margin-top:0"><div class="sk-bars" style="margin-top:0">${bars}</div></div>
+    </section>
+    <section class="enrich">
+      <div class="sk" style="width:150px;height:15px;margin:20px 0 8px"></div>
+      <div class="week">${day.repeat(7)}</div>
+    </section>
+    <section class="details-sec">
+      <div class="sk" style="width:170px;height:15px;margin:20px 0 8px"></div>
+      <div class="det2">${listRow.repeat(5)}</div>
+      <div class="dettiles">
+        ${tile("70%")}${tile("70%")}${tile("70%")}
+        ${tile("70%")}${tile("70%")}${tile("70%")}
+        ${tile("88%", 'style="grid-column:span 2"')}${tile("62%")}
+      </div>
+      <div class="sk" style="width:64%;height:12px;margin-top:14px"></div>
+      <div class="sk" style="width:170px;height:34px;border-radius:8px;margin-top:12px"></div>
+    </section>
+  </div>`;
+}
+
+function skTrendsHtml(prompt: string): string {
+  const blocks = (n: number) => `<div class="strip">${'<div class="sk-dblock"></div>'.repeat(n)}</div>`;
+  return `
+  <section class="card empty-state"><p>${prompt}</p></section>
+  <div class="trends-layout" aria-hidden="true" style="margin-top:14px">
+    <section class="card trends-main">
+      <div class="sk" style="width:170px;height:18px"></div>
+      <div class="sk" style="width:110px;height:14px;margin:16px 0 8px"></div>
+      ${blocks(7)}
+      <div class="sk" style="width:120px;height:14px;margin:16px 0 8px"></div>
+      ${blocks(30)}
+      <div class="sk sk-line" style="width:88%"></div>
+      <div class="sk sk-line" style="width:76%"></div>
+    </section>
+    <aside class="card day-panel">
+      <div class="sk" style="width:55%;height:16px"></div>
+      <div class="sk sk-line" style="width:90%"></div>
+      <div class="sk sk-line" style="width:82%"></div>
+      <div class="sk sk-line" style="width:64%"></div>
+    </aside>
+  </div>`;
+}
+
 function renderPlanner(): void {
   const el = $("#planner");
   const side = $("#plan-side");
   const cards = $("#plan-cards");
   if (!state.place) {
-    side.innerHTML = "";
-    cards.innerHTML = "";
-    // #27: the first-run empty state is a single line.
-    el.innerHTML = `
-      <section class="card empty-state">
-        <p>Search above, pick on the map, or use your location.</p>
-      </section>`;
+    // #33: no-data state = the prompt line over skeleton placeholders.
+    side.innerHTML = skHeroHtml();
+    cards.innerHTML = skAreasHtml();
+    el.innerHTML = skMainHtml("Search above, pick on the map, or use your location.");
     return;
   }
   const target = currentTarget();
   if (!target) {
-    // #24: nothing computes until a real target is chosen.
-    side.innerHTML = "";
-    cards.innerHTML = "";
-    el.innerHTML = `
-      <section class="card empty-state">
-        <p>Pick a target to see best times.</p>
-      </section>`;
+    // #24: nothing computes until a real target is chosen; #33
+    // placeholders fill the layout the same way.
+    side.innerHTML = skHeroHtml();
+    cards.innerHTML = skAreasHtml();
+    el.innerHTML = skMainHtml("Pick a target to see best times.");
     return;
   }
   const key = addDaysKey(startKey(), state.dayOffset);
@@ -599,19 +680,13 @@ function daySummary(key: string): { band: string; best: string; hi: number; lo: 
 function renderTrends(): void {
   const el = $("#trends");
   if (!state.place) {
-    el.innerHTML = `
-      <section class="card empty-state">
-        <p>Trends appear once a location is chosen above.</p>
-      </section>`;
+    el.innerHTML = skTrendsHtml("Trends appear once a location is chosen above.");
     return;
   }
   const target = currentTarget();
   if (!target) {
     // #24: Trends is gated the same way as the planner.
-    el.innerHTML = `
-      <section class="card empty-state">
-        <p>Pick a target to see best times.</p>
-      </section>`;
+    el.innerHTML = skTrendsHtml("Pick a target to see best times.");
     return;
   }
   const start = startKey();
@@ -1061,10 +1136,42 @@ function initMap(): void {
   const hasPlace = !!state.place;
   const c = currentLatLon();
   leafletMap = L.map("map").setView([c.lat, c.lon], hasPlace ? 10 : 4);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap contributors",
-    maxZoom: 18,
-  }).addTo(leafletMap);
+  // #37: three base layers behind the Layers switcher (top-left,
+  // under the zoom buttons). The saved choice is restored (validated
+  // in config) and re-saved whenever the user switches.
+  const baseLayers: Record<BaseMapId, L.TileLayer> = {
+    map: L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap contributors",
+      maxZoom: 18,
+    }),
+    satellite: L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      {
+        attribution: "Esri, Maxar, Earthstar Geographics",
+        maxZoom: 18,
+      },
+    ),
+    topo: L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+      attribution: "Map data: © OpenStreetMap contributors, SRTM | map style: © OpenTopoMap (CC-BY-SA)",
+      maxZoom: 15,
+    }),
+  };
+  const baseLabels: Record<BaseMapId, string> = { map: "Map", satellite: "Satellite", topo: "Topo" };
+  baseLayers[loadBaseMapId()].addTo(leafletMap);
+  L.control
+    .layers(
+      { Map: baseLayers.map, Satellite: baseLayers.satellite, Topo: baseLayers.topo },
+      undefined,
+      { position: "topleft" },
+    )
+    .addTo(leafletMap);
+  leafletMap.on("baselayerchange", (e: L.LayersControlEvent) => {
+    const id = (Object.keys(baseLabels) as BaseMapId[]).find((k) => baseLabels[k] === e.name);
+    if (id) saveBaseMapId(id);
+  });
+  // #37: scale bar — imperial only, bottom-left (both map views: the
+  // same #map element moves between the inline panel and the modal).
+  L.control.scale({ imperial: true, metric: false, position: "bottomleft" }).addTo(leafletMap);
   const ExpandControl = L.Control.extend({
     onAdd: () => {
       const btn = L.DomUtil.create("button", "map-expand-btn") as HTMLButtonElement;
@@ -1192,7 +1299,7 @@ function printHeaderHtml(viewLabel: string, rangeLabel: string): string {
     ` · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   const target = currentTarget();
   return `
-  <div class="phead"><h1>Zero Light</h1><span class="pprinted">${esc(printed)}</span></div>
+  <div class="phead"><span class="plogo"><img src="${lockupLightUrl}" alt="Zero Light" /></span><span class="pprinted">${esc(printed)}</span></div>
   <p class="pmeta"><strong>${esc(locationShortName())}</strong> · Target: <strong>${esc(target?.name ?? "")}</strong></p>
   <p class="pmeta">${esc(viewLabel)} — ${esc(rangeLabel)}</p>`;
 }
@@ -1393,6 +1500,8 @@ function aboutHtml(version: string): string {
     ${link("https://myfwc.com/research/redtide/", "FWC-FWRI", "red tide monitoring")}
     ${link("https://www.geoapify.com/", "Geoapify", "place search &amp; geocoding")}
     ${link("https://www.openstreetmap.org/copyright", "OpenStreetMap contributors", "map data")}
+    ${link("https://www.esri.com/", "Esri", "satellite base map imagery (World Imagery)")}
+    ${link("https://opentopomap.org/", "OpenTopoMap", "topographic base map")}
     ${link("https://leafletjs.com/", "Leaflet", "map library")}
     ${link("https://www.zippopotam.us/", "Zippopotam.us", "ZIP code lookups")}
   </ul>
@@ -1407,6 +1516,17 @@ function closeInfoMenu(): void {
 function closePrintMenu(): void {
   $("#print-menu").hidden = true;
   $("#print-btn").setAttribute("aria-expanded", "false");
+}
+
+/** #35: hang a header menu from its own button. The menu is
+ *  position:fixed; its top lands 6px under the button and its right
+ *  edge aligns with the button's right edge (opens down-left). Fixed
+ *  positioning keeps it out of the document flow, so opening it can
+ *  never change the app's dimensions or summon scroll bars. */
+function placeMenu(btn: HTMLElement, menu: HTMLElement): void {
+  const r = btn.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 6}px`;
+  menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
 }
 
 /** #25: the Settings theme chips mirror the saved preference when the
@@ -1525,6 +1645,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const menu = $("#info-menu");
     const willOpen = menu.hidden;
     menu.hidden = !willOpen;
+    if (willOpen) placeMenu($("#info-btn"), menu);
     $("#info-btn").setAttribute("aria-expanded", String(willOpen));
   });
   $("#menu-how").addEventListener("click", () => {
@@ -1541,8 +1662,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     const menu = $("#print-menu");
     const willOpen = menu.hidden;
     menu.hidden = !willOpen;
+    if (willOpen) placeMenu($("#print-btn"), menu);
     $("#print-btn").setAttribute("aria-expanded", String(willOpen));
   });
+  // #35: an open menu closes when the page scrolls or resizes (the
+  // button it hangs from has moved).
+  window.addEventListener("scroll", () => { closeInfoMenu(); closePrintMenu(); }, { passive: true });
+  window.addEventListener("resize", () => { closeInfoMenu(); closePrintMenu(); });
   $("#print-day").addEventListener("click", () => {
     closePrintMenu();
     doPrint("day");
@@ -1567,9 +1693,18 @@ window.addEventListener("DOMContentLoaded", async () => {
       $(`#${b.dataset.close}`).hidden = true;
     }),
   );
+  // #37: a backdrop click counts only when the PRESS also started on
+  // the backdrop. A press that starts inside the modal (e.g. a map
+  // drag) and releases on the backdrop otherwise surfaces as a click
+  // targeted at the backdrop — which used to cancel the map session.
+  let backdropPressTarget: EventTarget | null = null;
+  document.addEventListener("mousedown", (e) => {
+    backdropPressTarget = e.target;
+  });
   document.querySelectorAll<HTMLElement>(".modal-backdrop").forEach((bd) =>
     bd.addEventListener("click", (e) => {
       if (e.target !== bd) return;
+      if (backdropPressTarget !== bd) return;
       // The map modal's backdrop click is a cancel (item #17): discard
       // the working pin and close both views, like Esc.
       if (bd.id === "map-modal") closeMapAll();
@@ -1620,12 +1755,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     saveSettings(state.settings);
     applyTheme();
     $("#settings-modal").hidden = true;
-    $("#status").textContent = "Settings saved on this device.";
+    // #34: no "settings saved" confirmation message (Wade, 2026-11-13).
   });
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.2";
+  let versionLabel = "Zero Light 0.4.3";
   try {
     versionLabel = await invoke<string>("app_info");
   } catch {

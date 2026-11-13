@@ -30,8 +30,21 @@
     <main class="container">
       <div class="side-col">
         <header class="topbar">
-          <!-- #32 (L2): icon buttons on their own row, then the full lockup, then the tagline. -->
-          <div class="icon-row">
+          <!-- #33: one row — lockup inline with the icon buttons (refresh
+               first); tagline tight under the row. -->
+          <div class="brand-row">
+            <div class="brand">
+              <h1 class="sr-only">Zero Light</h1>
+              <img id="brand-lockup-light" class="brand-lockup brand-lockup-light" alt="Zero Light" />
+              <img id="brand-lockup-dark" class="brand-lockup brand-lockup-dark" alt="Zero Light" />
+            </div>
+            <div class="icon-row">
+            <button id="refresh-btn" class="icon-btn" type="button" title="Refresh data" aria-label="Refresh data">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+                <path d="M21 3v6h-6"></path>
+              </svg>
+            </button>
             <button id="print-btn" class="icon-btn" type="button" title="Print" aria-label="Print" aria-haspopup="menu" aria-expanded="false">
               <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M7 8V3.5h10V8"></path>
@@ -52,13 +65,9 @@
                 <line x1="12" y1="7.6" x2="12.01" y2="7.6"></line>
               </svg>
             </button>
+            </div>
           </div>
-          <div class="brand">
-            <h1 class="sr-only">Zero Light</h1>
-            <img id="brand-lockup-light" class="brand-lockup brand-lockup-light" alt="Zero Light" />
-            <img id="brand-lockup-dark" class="brand-lockup brand-lockup-dark" alt="Zero Light" />
-            <p class="subtitle">Your best times to hunt and fish.</p>
-          </div>
+          <p class="subtitle">Your best times to hunt and fish.</p>
           <div id="info-menu" class="info-menu" role="menu" hidden>
             <button type="button" role="menuitem" id="menu-how">How ratings work</button>
             <button type="button" role="menuitem" id="menu-about">About &amp; credits</button>
@@ -143,7 +152,6 @@
         <p class="status-row">
           <span id="status" class="status"></span>
           <span id="updated-note" class="note"></span>
-          <button id="refresh-btn" type="button" class="small-btn">Refresh data</button>
         </p>
         <section id="planner"></section>
         <section id="trends" hidden></section>
