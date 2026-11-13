@@ -1,5 +1,5 @@
 // UI regression check (next-build item #6; extended for v0.3.0 #17/#18/#20,
-// v0.4.0 #22–#29, v0.4.1 #30, v0.4.2 #32, and v0.4.3 #33–#37).
+// v0.4.0 #22–#29, v0.4.1 #30, v0.4.2 #32, v0.4.3 #33–#37, v0.4.4 #38–#40).
 //
 // The v0.1.0 startup bug passed the engine-only smoke test (24/24)
 // because nothing ever rendered the app. This check serves the built
@@ -209,6 +209,11 @@ try {
   await page.goto("http://localhost:4173/", { waitUntil: "load" });
 
   check("title is Zero Light", (await page.title()).startsWith("Zero Light"));
+  // #39: Print is disabled until a location and a target are chosen.
+  check(
+    "print starts disabled with nothing chosen (#39)",
+    await page.evaluate(() => document.querySelector("#print-btn").disabled),
+  );
   check("no preset location dropdown remains", (await page.locator("#location").count()) === 0);
   check("unified search box exists", (await page.locator("#place-search").count()) === 1);
 
@@ -392,6 +397,45 @@ try {
 
   // At desktop width the same click fills the side panel instead (#28).
   await page.setViewportSize({ width: 1400, height: 900 });
+
+  // v0.4.4 — #38 (trends in the main column, height-matched skeleton
+  // panel), #39 (quiet status, print gating), #40 (view icons).
+  await page.click('#view-picker .chip[data-view="planner"]');
+  await page.click('#view-picker .chip[data-view="trends"]');
+  await page.waitForFunction(
+    () => document.querySelectorAll("#trends .day-block").length >= 30,
+    null,
+    { timeout: 8000 },
+  );
+  await page.waitForTimeout(400);
+  const t38 = await page.evaluate(() => {
+    const trends = document.querySelector("#trends").getBoundingClientRect();
+    const status = document.querySelector(".status-row").getBoundingClientRect();
+    const main = document.querySelector(".trends-main").getBoundingClientRect();
+    const panel = document.querySelector("#day-panel").getBoundingClientRect();
+    return {
+      colAligned: Math.abs(trends.left - status.left) <= 3,
+      heightsMatch: Math.abs(main.height - panel.height) <= 2,
+      skCount: document.querySelectorAll("#day-panel .sk, #day-panel .sk-slot").length,
+    };
+  });
+  check("#38 trends sits in the main column", t38.colAligned);
+  check("#38 unfilled day panel matches chart height", t38.heightsMatch);
+  check("#38 unfilled day panel is skeleton-filled", t38.skCount >= 8);
+  const t3940 = await page.evaluate(() => {
+    const svgs = [...document.querySelectorAll("#view-picker .chip svg")];
+    return {
+      icons: svgs.length,
+      iconW: svgs.length ? svgs[0].getBoundingClientRect().width : 0,
+      printDisabled: document.querySelector("#print-btn").disabled,
+      status: document.querySelector("#status").textContent ?? "",
+    };
+  });
+  check("#40 both view buttons carry an icon", t3940.icons === 2);
+  check("#40 view icon is 16px", Math.abs(t3940.iconW - 16) <= 1);
+  check("#39 print is enabled once place+target are set", t3940.printDisabled === false);
+  check("#39 status shows no progress text", !/Loading forecast/.test(t3940.status));
+
   await page.click("#trends .day-block >> nth=3");
   await page.waitForFunction(
     () => document.querySelector("#day-panel")?.textContent?.includes("Day:"),
@@ -399,6 +443,12 @@ try {
     { timeout: 8000 },
   );
   check("desktop trends uses the side panel, not the modal", await page.locator("#day-modal").isHidden());
+  const t38b = await page.evaluate(() => {
+    const main = document.querySelector(".trends-main").getBoundingClientRect();
+    const panel = document.querySelector("#day-panel").getBoundingClientRect();
+    return Math.abs(main.height - panel.height) <= 2;
+  });
+  check("#38 filled day panel still matches chart height", t38b);
   await page.setViewportSize({ width: 1000, height: 850 });
 
   // Settings modal — v0.3.0: key/endpoint fields are GONE (#20);

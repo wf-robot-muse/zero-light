@@ -189,7 +189,7 @@ async function ensureData(force = false): Promise<void> {
   if (state.loading) return;
   if (!force && state.weatherFor === key && state.extrasFor === key) return;
   state.loading = true;
-  $("#status").textContent = "Loading forecast…";
+  // #39: no progress text — the status line shows problems only.
   try {
     state.weather = await fetchWeather(lat, lon, {
       cacheEndpoint: CACHE_ENDPOINT,
@@ -535,6 +535,35 @@ function skMainHtml(prompt: string): string {
   </div>`;
 }
 
+/** #38: the unfilled day panel mirrors the filled one's shape in
+ *  skeleton blocks — heading, verdict, two slot cards, detail lines —
+ *  and, in the stretched trends layout, fills the chart card's height
+ *  until a day is selected. */
+function skDayPanelHtml(): string {
+  const slot = (top: number) => `
+    <div class="sk-slot" style="margin-top:${top}px">
+      <div class="sk" style="width:40%;height:14px"></div>
+      <div class="sk sk-line" style="width:85%"></div>
+      <div class="sk sk-line" style="width:60%"></div>
+      <div class="sk sk-line" style="width:45%"></div>
+    </div>`;
+  return `
+    <div class="sk" style="width:55%;height:17px"></div>
+    <div class="sk" style="width:100%;height:36px;border-radius:8px;margin-top:14px"></div>
+    ${slot(14)}
+    ${slot(12)}
+    <div class="sk sk-line" style="width:92%"></div>
+    <div class="sk sk-line" style="width:96%"></div>
+    <div class="sk sk-line" style="width:88%"></div>
+    <div class="sk sk-line" style="width:94%"></div>
+    <div class="sk sk-line" style="width:70%"></div>
+    <div class="sk sk-line" style="width:90%;margin-top:22px"></div>
+    <div class="sk sk-line" style="width:82%"></div>
+    <div class="sk sk-line" style="width:64%"></div>
+    <div class="sk sk-line" style="width:78%;margin-top:22px"></div>
+    <div class="sk sk-line" style="width:58%"></div>`;
+}
+
 function skTrendsHtml(prompt: string): string {
   const blocks = (n: number) => `<div class="strip">${'<div class="sk-dblock"></div>'.repeat(n)}</div>`;
   return `
@@ -549,11 +578,7 @@ function skTrendsHtml(prompt: string): string {
       <div class="sk sk-line" style="width:88%"></div>
       <div class="sk sk-line" style="width:76%"></div>
     </section>
-    <aside class="card day-panel">
-      <div class="sk" style="width:55%;height:16px"></div>
-      <div class="sk sk-line" style="width:90%"></div>
-      <div class="sk sk-line" style="width:82%"></div>
-      <div class="sk sk-line" style="width:64%"></div>
+    <aside class="card day-panel">${skDayPanelHtml()}
     </aside>
   </div>`;
 }
@@ -737,9 +762,7 @@ function renderTrends(): void {
         <button type="button" id="export-all">Export forecast days (.ics)</button>
       </div>
     </section>
-    <aside id="day-panel" class="card day-panel">
-      <h3>Day detail</h3>
-      <p class="note">Select a day to see its full detail here.</p>
+    <aside id="day-panel" class="card day-panel">${skDayPanelHtml()}
     </aside>
     </div>`;
 
@@ -776,7 +799,15 @@ function renderTrends(): void {
   });
 }
 
+/** #39: Print stays disabled until a location and a target are both
+ *  chosen; re-evaluated on every render (place/target/view changes). */
+function syncPrintBtn(): void {
+  const btn = $<HTMLButtonElement>("#print-btn");
+  if (btn) btn.disabled = !(state.place && currentTarget());
+}
+
 function render(): void {
+  syncPrintBtn();
   const planner = state.view === "planner";
   $("#planner").hidden = !planner;
   $("#plan-side").hidden = !planner;
@@ -1421,10 +1452,9 @@ function renderPrint(mode: PrintMode): void {
 }
 
 function doPrint(mode: PrintMode): void {
-  if (!state.place || !currentTarget()) {
-    $("#status").textContent = "Choose a location and a target first.";
-    return;
-  }
+  // #39: no guidance message — the Print button is disabled in this
+  // state, and the browser-print path simply does nothing.
+  if (!state.place || !currentTarget()) return;
   renderPrint(mode);
   window.print();
 }
@@ -1760,7 +1790,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.3";
+  let versionLabel = "Zero Light 0.4.4";
   try {
     versionLabel = await invoke<string>("app_info");
   } catch {

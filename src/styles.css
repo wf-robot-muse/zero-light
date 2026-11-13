@@ -188,6 +188,9 @@ button:hover { border-color: var(--accent); }
    the locked 230px lockup fits the phone row with the four buttons;
    modal close buttons keep the roomier 7px padding. */
 .topbar .icon-btn { padding: 3px; }
+/* #39: a disabled header button (Print, until a location and target
+   are chosen) reads as unavailable and takes no clicks. */
+.icon-btn:disabled { opacity: 0.38; cursor: default; }
 .topbar .icon-btn svg { width: 24px; height: 24px; }
 .icon-btn {
   background: none; border: none; padding: 7px; cursor: pointer;
@@ -290,6 +293,9 @@ button:hover { border-color: var(--accent); }
 }
 .views-toggle .chip { flex: 1; border: none; box-shadow: none; background: transparent; padding: 0.5em 1em; }
 .views-toggle .chip.selected { background: #2e7d46; color: #fff; }
+/* #40: view buttons carry a small icon before the label. */
+.views-toggle .chip { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.views-toggle .chip svg { width: 16px; height: 16px; flex: none; }
 
 .status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 1.6em; margin: 0 0 12px; }
 .small-btn { padding: 0.25em 0.8em; font-size: 0.85em; }
@@ -515,7 +521,7 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
   }
   /* The two wrapper columns dissolve so their children become grid
      items: rail (header, search, chips, toggle, hero, area cards) in
-     column 1, planner/status in column 2, trends full width. */
+     column 1, planner/status/trends in column 2 (#38). */
   .side-col, .main-col { display: contents; }
   .topbar, .controls, .chips-block, .views-block, #plan-side, #plan-cards { grid-column: 1; }
   .status-row, #planner { grid-column: 2; }
@@ -527,9 +533,9 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
   #plan-cards { grid-row: 6; }
   .status-row { grid-row: 1; }
   #planner { grid-row: 2 / span 5; }
-  #trends { grid-column: 1 / -1; grid-row: 5; }
+  #trends { grid-column: 2; grid-row: 2 / span 5; }
   .area-cards.enrich { grid-template-columns: 1fr; }
-  .trends-layout { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 18px; align-items: start; }
+  .trends-layout { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 18px; align-items: stretch; }
   .trends-main { margin: 0; }
   .day-panel { display: block; margin: 0; position: sticky; top: 18px; }
   .day-panel .slotgrid { grid-template-columns: 1fr; }
