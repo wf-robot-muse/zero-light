@@ -418,6 +418,39 @@ try {
   );
   await page.click('#day-modal .modal-close');
 
+  // v0.4.6 — #52 (app-drawn select chevron), #50 modal form (action
+  // row on one row), #53 modal form (best-day chip opens the detail).
+  const t52 = await page.evaluate(() => {
+    const cs = getComputedStyle(document.querySelector("#target"));
+    return { appearance: cs.appearance, bg: cs.backgroundImage };
+  });
+  check(
+    "#52 target select draws its own chevron",
+    t52.appearance === "none" && t52.bg.includes("data:image/svg+xml"),
+  );
+  await page.click("#trends .day-block >> nth=2");
+  await page.waitForSelector("#day-modal:not([hidden])", { timeout: 8000 });
+  const t50a = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll("#day-modal .modal-actions > button")];
+    if (btns.length !== 2) return null;
+    const [a, b] = btns.map((x) => x.getBoundingClientRect());
+    return Math.abs(a.top - b.top) <= 1;
+  });
+  check("#50 modal action buttons share one row", t50a === true);
+  await page.click('#day-modal .modal-close');
+  const chipDay = await page.evaluate(() => {
+    const chip = document.querySelector(".best-chip");
+    return chip ? chip.textContent.trim().split(" ").pop() : null;
+  });
+  await page.click(".best-chip >> nth=0");
+  await page.waitForSelector("#day-modal:not([hidden])", { timeout: 8000 });
+  check(
+    "#53 best-day chip opens that day's detail (modal)",
+    chipDay !== null &&
+      ((await page.locator("#day-modal-title").textContent()) ?? "").includes(chipDay),
+  );
+  await page.click('#day-modal .modal-close');
+
   // At desktop width the same click fills the side panel instead (#28).
   await page.setViewportSize({ width: 1400, height: 900 });
 
@@ -472,6 +505,29 @@ try {
     return Math.abs(main.height - panel.height) <= 2;
   });
   check("#38 filled day panel still matches chart height", t38b);
+
+  // v0.4.6 — #50 panel form + #53 panel form.
+  const t50b = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll("#day-panel .modal-actions > button")];
+    if (btns.length !== 2) return null;
+    const [a, b] = btns.map((x) => x.getBoundingClientRect());
+    return Math.abs(a.top - b.top) <= 1;
+  });
+  check("#50 panel action buttons share one row", t50b === true);
+  const chipKey = await page.evaluate(
+    () => document.querySelector(".best-chip")?.dataset.key ?? null,
+  );
+  await page.click(".best-chip >> nth=0");
+  await page.waitForFunction(
+    (key) =>
+      (document.querySelector("#day-panel")?.textContent ?? "").includes("Day:") &&
+      (document.querySelector("#day-panel h3")?.textContent ?? "").includes(
+        new Date(`${key}T12:00:00`).toLocaleDateString(undefined, { month: "long" }),
+      ),
+    chipKey,
+    { timeout: 8000 },
+  );
+  check("#53 best-day chip opens that day's detail (panel)", chipKey !== null);
   await page.setViewportSize({ width: 1000, height: 850 });
 
   // Settings modal — v0.3.0: key/endpoint fields are GONE (#20);
@@ -745,6 +801,118 @@ try {
     await page2.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   );
   await ctx2.close();
+
+  // v0.4.6 — #48: with a mocked Tauri bridge, Print routes by OS —
+  // macOS must call the native print_page command and never reach
+  // window.print (WKWebView drops it silently); Windows keeps
+  // window.print and never calls print_page.
+  async function mockRoutesFor(p) {
+    await p.route("**workers.dev/weather**", (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(weatherFixture()) }),
+    );
+    await p.route("**workers.dev/usgs**", (route) =>
+      route.fulfill({ contentType: "application/json", body: "{}" }),
+    );
+    await p.route("**workers.dev/normals**", (route) =>
+      route.fulfill({ contentType: "application/json", body: "{}" }),
+    );
+    await p.route("**workers.dev/reverse**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ label: "Tampa, FL, United States" }),
+      }),
+    );
+    await p.route("**workers.dev/geocode**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          results: [{ lat: 27.9506, lon: -82.4572, label: "Tampa, FL, United States", detail: "Florida, United States" }],
+        }),
+      }),
+    );
+    await p.route("**workers.dev/geo**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ lat: 30.4687, lon: -87.1861, city: "Pensacola", region: "Florida", country: "US" }),
+      }),
+    );
+    await p.route("**api.open-meteo.com**", (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(weatherFixture()) }),
+    );
+    await p.route("**api.tidesandcurrents.noaa.gov/api/**", (route) => {
+      const interval = new URL(route.request().url()).searchParams.get("interval");
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(tideFixture(interval)) });
+    });
+    await p.route("**api.tidesandcurrents.noaa.gov/mdapi/**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          stations: [{ id: "8726520", name: "St. Petersburg", lat: "27.773", lng: "-82.627" }],
+        }),
+      }),
+    );
+    await p.route("**api.waterdata.usgs.gov**", (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify({ features: [] }) }),
+    );
+    await p.route("**gis.myfwc.com**", (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify({ features: [] }) }),
+    );
+    await p.route("**tile.openstreetmap.org**", (route) =>
+      route.fulfill({ contentType: "image/png", body: Buffer.alloc(0) }),
+    );
+  }
+  async function printRoute(os) {
+    const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
+    await ctx.addInitScript((mockOs) => {
+      window.__bridgeCalls = [];
+      window.__winPrint = 0;
+      window.print = () => {
+        window.__winPrint += 1;
+      };
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd) => {
+          window.__bridgeCalls.push(cmd);
+          if (cmd === "app_info") return "Zero Light 0.4.6 — Tauri 2";
+          if (cmd === "shell_info") return { os: mockOs, arch: "arm64" };
+          return null;
+        },
+      };
+    }, os);
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    // Typed coordinates apply directly (same proven path as the main
+    // flow above — no geocode round-trip involved).
+    await p.fill("#place-search", "27.9506, -82.4572");
+    await p.press("#place-search", "Enter");
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
+      null,
+      { timeout: 20000 },
+    );
+    await p.selectOption("#target", "redfish");
+    await p.waitForSelector("#plan-side .hero", { timeout: 20000 });
+    await p.click("#print-btn");
+    await p.waitForSelector("#print-menu:not([hidden])", { timeout: 8000 });
+    await p.click("#print-menu button >> nth=0");
+    await p.waitForTimeout(400);
+    const out = await p.evaluate(() => ({
+      calls: window.__bridgeCalls,
+      winPrint: window.__winPrint,
+    }));
+    await ctx.close();
+    return out;
+  }
+  const prMac = await printRoute("macos");
+  check(
+    "#48 macOS shell prints via the native print_page command",
+    prMac.calls.includes("print_page") && prMac.winPrint === 0,
+  );
+  const prWin = await printRoute("windows");
+  check(
+    "#48 Windows shell keeps window.print",
+    !prWin.calls.includes("print_page") && prWin.winPrint === 1,
+  );
 } catch (err) {
   console.log("ERROR", err.message);
   failures.push("exception: " + err.message);

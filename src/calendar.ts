@@ -119,8 +119,41 @@ export function buildIcs(days: ExportDay[], opts: { includeTypical: boolean; inc
   return lines.join("\r\n") + "\r\n";
 }
 
-export function downloadIcs(days: ExportDay[], opts: { includeTypical: boolean; includeDontGo: boolean }): void {
-  const blob = new Blob([buildIcs(days, opts)], { type: "text/calendar" });
+/** #49: one save route for every .ics the app produces. In the desktop
+ *  apps the user gets the native Save As dialog (name + location,
+ *  default "zero-light-plans.ics") and the file is written to exactly
+ *  the path they chose — cancelling writes nothing. On the web the
+ *  build is unchanged: the browser's own download with the fixed name
+ *  (Wade's scope call, 2026-11-14: desktop only). The shell is detected
+ *  once through the app's own shell_info command. */
+let shellOsCache: string | null | undefined;
+
+async function detectShellOs(): Promise<string | null> {
+  if (shellOsCache !== undefined) return shellOsCache;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const info = await invoke<{ os?: unknown }>("shell_info");
+    shellOsCache = info && typeof info.os === "string" ? info.os : null;
+  } catch {
+    shellOsCache = null; // web build: no bridge
+  }
+  return shellOsCache;
+}
+
+async function saveIcsText(text: string): Promise<void> {
+  const os = await detectShellOs();
+  if (os) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+    const path = await save({
+      defaultPath: "zero-light-plans.ics",
+      filters: [{ name: "Calendar file", extensions: ["ics"] }],
+    });
+    if (!path) return; // user cancelled the dialog — nothing is written
+    await writeTextFile(path, text);
+    return;
+  }
+  const blob = new Blob([text], { type: "text/calendar" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -129,18 +162,20 @@ export function downloadIcs(days: ExportDay[], opts: { includeTypical: boolean; 
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+export function downloadIcs(days: ExportDay[], opts: { includeTypical: boolean; includeDontGo: boolean }): void {
+  void saveIcsText(buildIcs(days, opts)).catch(() => {
+    /* dialog/write failure: nothing saved; the export can be retried */
+  });
+}
+
 /** #43: the per-slot "Apple / .ics" entry — a one-event .ics download for
  *  exactly this slot, parallel to the Google/Outlook per-slot links.
  *  Reuses buildIcs so the title/description match the other routes. */
 export function downloadSlotIcs(day: ExportDay, slot: Slot): void {
   const one: ExportDay = { ...day, plan: { ...day.plan, slots: [slot] } };
-  const blob = new Blob([buildIcs([one], { includeTypical: true, includeDontGo: true })], { type: "text/calendar" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "zero-light-plans.ics";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  void saveIcsText(buildIcs([one], { includeTypical: true, includeDontGo: true })).catch(() => {
+    /* dialog/write failure: nothing saved; the export can be retried */
+  });
 }
 
 export function googleUrl(day: ExportDay, slot: Slot): string {

@@ -164,6 +164,16 @@ button:hover { border-color: var(--accent); }
   border: 1px solid #e3b93e; border-left: 5px solid #e3b93e; border-radius: 8px;
 }
 [data-theme="dark"] .held-back-banner { color: #f0d48a; background: #3a2f10; border-color: #8a6d1f; }
+/* #47 fallback B: the approximate-area offer card — the held-back
+   banner's amber, but an action card with two choices. */
+.approx-card {
+  margin: 10px 0 4px; padding: 10px 12px;
+  color: #8a5200; background: #fdf3d7;
+  border: 1px solid #e3b93e; border-left: 5px solid #e3b93e; border-radius: 8px;
+}
+.approx-card p { margin: 0 0 8px; }
+.approx-card .row { gap: 8px; margin: 0; }
+[data-theme="dark"] .approx-card { color: #f0d48a; background: #3a2f10; border-color: #8a6d1f; }
 [data-theme="dark"] .held-back { color: #e8c96a; }
 .astro { margin-top: 10px; }
 
@@ -292,7 +302,18 @@ button:hover { border-color: var(--accent); }
 
 /* ---- chips + view toggle (#28) ---- */
 .chips-block { display: flex; flex-wrap: wrap; gap: 12px 26px; margin: 0 0 14px; }
-.target-select { border-radius: 999px; padding: 0.45em 2em 0.45em 1em; font-weight: 600; box-shadow: var(--shadow); }
+/* #52: the select draws its OWN chevron at a fixed inset — with native
+   appearance each engine places its arrow itself, and Safari/WKWebView
+   pin it almost on the pill's right edge. Same spacing everywhere now. */
+.target-select {
+  border-radius: 999px; padding: 0.45em 2.2em 0.45em 1em; font-weight: 600; box-shadow: var(--shadow);
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 1.5 6 6l4.5-4.5' fill='none' stroke='%233f5546' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 0.9em center; background-size: 0.72em;
+}
+[data-theme="dark"] .target-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 1.5 6 6l4.5-4.5' fill='none' stroke='%23cfd6cc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
 .views-block { margin: 0 0 16px; }
 .views-toggle {
   background: var(--card); border-radius: 999px; padding: 4px;
@@ -444,10 +465,15 @@ button:hover { border-color: var(--accent); }
 .band-poor .db-band { color: #607d8b; }
 .band-veto .db-band { color: #b3261e; }
 .best-days { margin-top: 14px; }
+/* #53: chips are real buttons now (they open the day detail) — same
+   chip look, plus pointer/hover/focus affordances. */
 .best-chip {
   display: inline-block; background: var(--v-good-bg); border: 1px solid var(--accent);
   border-radius: 999px; padding: 2px 10px; margin-right: 4px; font-weight: 600; color: var(--v-good-fg);
+  font: inherit; font-size: 0.92em; cursor: pointer;
 }
+.best-chip:hover { border-color: var(--v-good-fg); }
+.best-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .legend strong { color: var(--reason); }
 .day-panel { display: none; }
 
@@ -467,7 +493,12 @@ button:hover { border-color: var(--accent); }
 .modal-head .icon-btn { font-size: 1.05em; line-height: 1; }
 /* #44: the day-detail action row now sits under the verdict (and the
    #42 banner), with clear space before the first slot. */
-.modal-actions { margin-top: 12px; margin-bottom: 16px; gap: 10px; flex-wrap: wrap; }
+/* #50: the action row must stay on ONE row — at the desktop day panel's
+   306px content width the two buttons fit by only ~7px in the reference
+   font, and wider platform font metrics (macOS) pushed them onto two
+   rows. No wrapping; the buttons may shrink a few px instead. */
+.modal-actions { margin-top: 12px; margin-bottom: 16px; gap: 10px; flex-wrap: nowrap; }
+.modal-actions > button { min-width: 0; padding-left: 0.8em; padding-right: 0.8em; }
 .check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 0.95em; cursor: pointer; }
 #theme-picker { flex-wrap: wrap; }
 

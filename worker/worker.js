@@ -406,6 +406,30 @@ async function handleNormals(request, env, ctx, url) {
   });
 }
 
+// #47 fallback B: the caller's approximate area from Cloudflare's edge
+// geolocation of the request IP (city level). Nothing is stored and no
+// coordinates are accepted from the client — the values come from
+// request.cf on THIS request only. The app shows the area on a card and
+// applies it only when the user taps "Use this area".
+function handleGeo(request) {
+  const cf = request.cf;
+  if (!cf || cf.latitude == null || cf.longitude == null) {
+    return jsonResponse({ error: "no geo for this request" }, 404);
+  }
+  const lat = parseFloat(cf.latitude);
+  const lon = parseFloat(cf.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return jsonResponse({ error: "no geo for this request" }, 404);
+  }
+  return jsonResponse({
+    lat,
+    lon,
+    city: typeof cf.city === "string" ? cf.city : "",
+    region: typeof cf.region === "string" ? cf.region : "",
+    country: typeof cf.country === "string" ? cf.country : "",
+  }, 200);
+}
+
 // ------------------------------------------------------------- router
 
 export default {
@@ -425,6 +449,8 @@ export default {
 
     if (request.method !== "GET") return jsonResponse({ error: "not found" }, 404);
     switch (url.pathname) {
+      case "/geo":
+        return handleGeo(request);
       case "/weather":
         return handleWeather(request, env, ctx, url);
       case "/geocode":

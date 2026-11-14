@@ -44,10 +44,9 @@ jobs:
             platform: windows-latest
             bundles: nsis,msi
             artifact: tauri-windows
-          - name: macOS (Apple Silicon)
-            platform: macos-26
-            bundles: dmg,app
-            artifact: tauri-macos-arm64
+          # #54: macOS builds in its own workflow (tauri-macos.yml) on
+          # macos-15, so a scarce macOS runner can never hold this
+          # workflow — or a release — hostage.
           - name: Linux x64
             platform: ubuntu-latest
             bundles: deb,appimage

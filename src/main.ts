@@ -764,7 +764,7 @@ function renderTrends(): void {
     .slice(0, 3);
   const chips = best.length
     ? `<p class="best-days">Best days this week: ${best
-        .map((p) => `<span class="best-chip">${parseDateKey(p.key).toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}</span>`)
+        .map((p) => `<button type="button" class="best-chip" data-key="${p.key}">${parseDateKey(p.key).toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}</button>`)
         .join(" ")}</p>`
     : "";
   el.innerHTML = `
@@ -801,6 +801,12 @@ function renderTrends(): void {
   };
   $("#export-week").addEventListener("click", () => exportRange(7));
   $("#export-month").addEventListener("click", () => exportRange(30));
+
+  // #53: the "Best days this week" chips open the same day detail as the
+  // week/month squares — panel at desktop widths, modal below.
+  el.querySelectorAll<HTMLButtonElement>(".best-chip").forEach((chip) => {
+    chip.addEventListener("click", () => openDayDetail(chip.dataset.key!));
+  });
 
   const tooltip = $("#tooltip");
   el.querySelectorAll<HTMLElement>(".day-block").forEach((cell) => {
@@ -1006,6 +1012,7 @@ function applyPlace(p: Place): void {
   syncClearBtn();
   setSearchStatus(`${place.label} — ${place.lat.toFixed(4)}, ${place.lon.toFixed(4)}`);
   hidePickList();
+  hideApproxCard();
   closeMapAll();
   state.weatherFor = "";
   state.extrasFor = "";
@@ -1096,18 +1103,121 @@ async function resolveSearch(): Promise<void> {
   showPickList(results);
 }
 
-/** Device geolocation (item #19): errors are reported by their real
- *  cause, and the lookup options suit Wi-Fi-only devices like Fire
- *  tablets (no high-accuracy demand, generous timeout, cached fix OK). */
+/** #47: which OS shell hosts the app ("macos" | "windows" | "linux"),
+ *  learned once at startup from the shell_info command; null on web. */
+let shellOs: string | null = null;
+
+function hideApproxCard(): void {
+  const card = $("#approx-card");
+  if (card) card.hidden = true;
+}
+
+/** #47 fallback B: when a precise fix fails, ask the cache Worker for
+ *  the caller's approximate area (Cloudflare edge geolocation of the
+ *  request IP) and offer it on a card. The area is applied ONLY when
+ *  the user taps "Use this area" — never silently. If the Worker has
+ *  no area for this request, the platform-correct status message
+ *  (branch C) stands on its own. City/region are remote strings:
+ *  length-capped here and rendered through esc() like all user text. */
+async function offerApproxArea(): Promise<void> {
+  try {
+    const res = await fetch(`${CACHE_ENDPOINT}/geo`);
+    if (!res.ok) return;
+    const data = (await res.json()) as {
+      lat?: unknown;
+      lon?: unknown;
+      city?: unknown;
+      region?: unknown;
+    };
+    const lat = typeof data.lat === "number" ? data.lat : NaN;
+    const lon = typeof data.lon === "number" ? data.lon : NaN;
+    const city = typeof data.city === "string" ? data.city.slice(0, 80) : "";
+    const region = typeof data.region === "string" ? data.region.slice(0, 80) : "";
+    if (
+      !Number.isFinite(lat) || !Number.isFinite(lon) ||
+      lat < -90 || lat > 90 || lon < -180 || lon > 180
+    ) {
+      return;
+    }
+    const area = [city, region].filter(Boolean).join(", ");
+    if (!area) return;
+    setSearchStatus("Couldn't get a precise location.");
+    const card = $("#approx-card");
+    card.innerHTML = `
+      <p><strong>Approximate area found</strong> — Your connection puts you near <strong>${esc(area)}</strong> — approximate only.</p>
+      <div class="row">
+        <button type="button" id="approx-use">Use this area</button>
+        <button type="button" id="approx-dismiss">Type a place instead</button>
+      </div>`;
+    card.hidden = false;
+    $("#approx-use").addEventListener("click", () => {
+      hideApproxCard();
+      applyPlace({ lat, lon, label: `${area} (approximate)` });
+    });
+    $("#approx-dismiss").addEventListener("click", () => {
+      hideApproxCard();
+      $<HTMLInputElement>("#place-search").focus();
+    });
+  } catch {
+    /* no fallback available — the branch-C message already explains */
+  }
+}
+
+/** #47 (macOS): the native CoreLocation route — inside Tauri the
+ *  webview can never prompt for location, so the Rust command asks the
+ *  system itself (with the app's NSLocationUsageDescription). */
+async function locateNativeMac(): Promise<void> {
+  try {
+    const fix = await invoke<{ lat: unknown; lon: unknown; accuracy: unknown }>("native_locate");
+    const lat = typeof fix.lat === "number" ? fix.lat : NaN;
+    const lon = typeof fix.lon === "number" ? fix.lon : NaN;
+    const acc = typeof fix.accuracy === "number" ? fix.accuracy : 0;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw "unavailable";
+    const near = await reverseLabel(lat, lon);
+    applyPlace({
+      lat,
+      lon,
+      label: near ?? `Near me (±${Math.round(acc)} m)`,
+    });
+  } catch (e) {
+    const kind = typeof e === "string" ? e : "";
+    if (kind === "denied") {
+      setSearchStatus(
+        "Location is off for Zero Light. Turn it on in System Settings → Privacy & Security → Location Services — or use a place name, ZIP code, coordinates, or the map.",
+      );
+    } else if (kind === "timeout") {
+      setSearchStatus(
+        "Locating timed out. Try again — or use a place name, ZIP code, coordinates, or the map.",
+      );
+    } else {
+      setSearchStatus(
+        "This Mac couldn't determine a location. Check that Wi-Fi is connected — or use a place name, ZIP code, coordinates, or the map.",
+      );
+    }
+    void offerApproxArea();
+  }
+}
+
+/** Device geolocation (items #19, #47): errors are reported by their
+ *  real cause, and the lookup options suit Wi-Fi-only devices like
+ *  Fire tablets (no high-accuracy demand, generous timeout, cached
+ *  fix OK). #47: macOS takes the native route above; Windows/Linux
+ *  desktop webviews are let through by the Rust permission handler and
+ *  use this same standard API; failure text is platform-correct (C). */
 function locateMe(): void {
   hidePickList();
+  hideApproxCard();
+  setSearchStatus("Locating…");
+  if (shellOs === "macos") {
+    void locateNativeMac();
+    return;
+  }
   if (!("geolocation" in navigator)) {
     setSearchStatus(
       "This device does not offer geolocation — use a place name, ZIP code, coordinates, or the map.",
     );
     return;
   }
-  setSearchStatus("Locating…");
   navigator.geolocation.getCurrentPosition(
     async (pos) => {
       const lat = pos.coords.latitude;
@@ -1121,18 +1231,39 @@ function locateMe(): void {
     },
     (err) => {
       if (err.code === err.PERMISSION_DENIED) {
-        setSearchStatus(
-          "Location permission was not granted. Allow location for this site in your browser settings — or use a place name, ZIP code, coordinates, or the map.",
-        );
+        if (shellOs === "windows") {
+          setSearchStatus(
+            "Location isn't available to Zero Light. Check that Location is on in Windows Settings → Privacy & security → Location — or use a place name, ZIP code, coordinates, or the map.",
+          );
+        } else if (shellOs === "linux") {
+          setSearchStatus(
+            "Location isn't available to Zero Light. Check that location services are on in your system settings — or use a place name, ZIP code, coordinates, or the map.",
+          );
+        } else {
+          setSearchStatus(
+            "Location permission was not granted. Allow location for this site in your browser settings — or use a place name, ZIP code, coordinates, or the map.",
+          );
+        }
       } else if (err.code === err.POSITION_UNAVAILABLE) {
-        setSearchStatus(
-          "This device couldn't determine a location. On Fire tablets, location comes from Wi-Fi — check that Location is ON in the device settings and Wi-Fi is connected. Or use a place name, ZIP code, coordinates, or the map.",
-        );
+        if (shellOs === "windows") {
+          setSearchStatus(
+            "Windows couldn't determine a location. Check that Location is on and Wi-Fi is connected — or use a place name, ZIP code, coordinates, or the map.",
+          );
+        } else if (shellOs === "linux") {
+          setSearchStatus(
+            "Your system couldn't determine a location — location services may be off, or no position source is available. Or use a place name, ZIP code, coordinates, or the map.",
+          );
+        } else {
+          setSearchStatus(
+            "This device couldn't determine a location. On Fire tablets, location comes from Wi-Fi — check that Location is ON in the device settings and Wi-Fi is connected. Or use a place name, ZIP code, coordinates, or the map.",
+          );
+        }
       } else {
         setSearchStatus(
           "Locating timed out. Check the Wi-Fi connection and try again — or use a place name, ZIP code, coordinates, or the map.",
         );
       }
+      void offerApproxArea();
     },
     { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 },
   );
@@ -1496,7 +1627,15 @@ function doPrint(mode: PrintMode): void {
   // state, and the browser-print path simply does nothing.
   if (!state.place || !currentTarget()) return;
   renderPrint(mode);
-  window.print();
+  // #48: WKWebView silently drops window.print() — macOS prints through
+  // the native print_page command; every other shell keeps window.print().
+  if (shellOs === "macos") {
+    void invoke("print_page").catch(() => {
+      /* native print unavailable — nothing more the page can do */
+    });
+  } else {
+    window.print();
+  }
 }
 
 // Browser print (Ctrl+P) without the button: default to the current view.
@@ -1830,9 +1969,12 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.5";
+  let versionLabel = "Zero Light 0.4.6";
   try {
     versionLabel = await invoke<string>("app_info");
+    // #47/#48: learn the hosting OS once; null stays for the web build.
+    const info = await invoke<{ os?: unknown }>("shell_info");
+    if (info && typeof info.os === "string") shellOs = info.os;
   } catch {
     /* web build: keep the fallback label */
   }

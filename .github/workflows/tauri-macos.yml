@@ -1,0 +1,49 @@
+name: Tauri macOS
+
+# #54: macOS builds on its own, decoupled from the main Tauri CI
+# workflow. History: on macos-26 (GitHub's newest, shallowest runner
+# pool) the job was cancelled twice in the v0.4.3 round without ever
+# getting a runner (15 min queued, then 2h 11m), and the release had
+# to skip macOS. This workflow pins macos-15 — the current mainstream
+# GA Apple Silicon image (macOS 14 was retired 2026-11-02) — and a
+# slow macOS queue now only delays the .dmg, never the release: the
+# artifact is attached to the release when this run lands.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    name: Build (macOS Apple Silicon)
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri app (dmg,app)
+        run: npx tauri build --bundles dmg,app
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-macos-arm64
+          path: src-tauri/target/release/bundle/**/*
+          if-no-files-found: error
