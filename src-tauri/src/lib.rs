@@ -147,7 +147,7 @@ mod mac_geo {
         let (tx, rx) = std::sync::mpsc::channel::<Result<Fix, String>>();
         let tx_main = tx.clone();
         app.run_on_main_thread(move || {
-            let manager = CLLocationManager::new();
+            let manager = unsafe { CLLocationManager::new() };
             let delegate: Retained<LocationDelegate> = {
                 let partial = LocationDelegate::alloc().set_ivars(Ivars {
                     tx: RefCell::new(Some(tx)),
@@ -157,7 +157,7 @@ mod mac_geo {
             unsafe {
                 manager.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
             }
-            match manager.authorizationStatus() {
+            match unsafe { manager.authorizationStatus() } {
                 CLAuthorizationStatus::AuthorizedWhenInUse
                 | CLAuthorizationStatus::AuthorizedAlways => unsafe {
                     manager.requestLocation();
