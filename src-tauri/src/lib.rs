@@ -57,7 +57,7 @@ fn native_locate() -> Result<serde_json::Value, String> {
 mod mac_geo {
     use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
-    use objc2::{define_class, msg_send, ClassType, DefinedClass};
+    use objc2::{define_class, msg_send, AnyThread, DefinedClass};
     use objc2_core_location::{
         CLAuthorizationStatus, CLLocation, CLLocationManager, CLLocationManagerDelegate,
     };
