@@ -228,6 +228,12 @@ button:hover { border-color: var(--accent); }
 .info-menu button { border: none; text-align: left; padding: 9px 12px; border-radius: 6px; background: none; color: var(--text); }
 .info-menu button:hover { background: var(--v-good-bg); border: none; }
 
+/* #56: the badge pop-out's rows carry a brand glyph drawn in
+   currentColor, so the icons flip with the theme like the logo. */
+.badge-menu { min-width: 170px; }
+.badge-menu button { display: flex; align-items: center; gap: 10px; }
+.badge-menu svg { flex: none; }
+
 /* ---- no-data skeletons (#33, option A: muted blocks mirroring the
    real regions at their real sizes; static, no animation) ---- */
 .sk { background: var(--sk); border-radius: 6px; }

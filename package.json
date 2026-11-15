@@ -24,5 +24,5 @@
     "test:ui": "node scripts/ui-check.mjs"
   },
   "type": "module",
-  "version": "0.4.6"
+  "version": "0.4.7"
 }

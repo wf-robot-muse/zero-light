@@ -36,10 +36,20 @@ fn print_page(window: tauri::WebviewWindow) -> Result<(), String> {
 /// system authorization), so the app asks CoreLocation directly. Error
 /// strings are stable kinds the frontend maps to its message branches:
 /// "denied" | "unavailable" | "timeout".
+///
+/// #55: this command MUST stay async with the wait on spawn_blocking.
+/// A synchronous Tauri command runs on the main thread, and
+/// mac_geo::locate blocks waiting for CoreLocation — whose setup,
+/// permission prompt, and delegate callbacks are all delivered by the
+/// main thread's run loop. Blocking the main thread deadlocks the
+/// request until its own timeout (v0.4.6 shipped that bug: beach ball,
+/// no prompt, approximate-area fallback on every Mac).
 #[cfg(target_os = "macos")]
 #[tauri::command]
-fn native_locate(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let fix = mac_geo::locate(&app)?;
+async fn native_locate(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let fix = tauri::async_runtime::spawn_blocking(move || mac_geo::locate(&app))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(serde_json::json!({
         "lat": fix.lat,
         "lon": fix.lon,
@@ -49,7 +59,7 @@ fn native_locate(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
 
 #[cfg(not(target_os = "macos"))]
 #[tauri::command]
-fn native_locate() -> Result<serde_json::Value, String> {
+async fn native_locate() -> Result<serde_json::Value, String> {
     Err("unsupported".to_string())
 }
 

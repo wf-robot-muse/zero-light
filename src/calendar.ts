@@ -128,7 +128,7 @@ export function buildIcs(days: ExportDay[], opts: { includeTypical: boolean; inc
  *  once through the app's own shell_info command. */
 let shellOsCache: string | null | undefined;
 
-async function detectShellOs(): Promise<string | null> {
+export async function detectShellOs(): Promise<string | null> {
   if (shellOsCache !== undefined) return shellOsCache;
   try {
     const { invoke } = await import("@tauri-apps/api/core");

@@ -80,6 +80,13 @@ import {
   type PlaceCandidate,
 } from "./extras";
 import { downloadIcs, downloadSlotIcs, googleUrl, outlookUrl, type ExportDay } from "./calendar";
+import {
+  downloadDayBadge,
+  downloadSlotBadge,
+  downloadWeekBadge,
+  type BadgeDay,
+  type BadgePlatform,
+} from "./badges";
 
 /** The one selected place (item #17). null = nothing selected yet —
  *  the app sits at its "enter a location" first-run state. */
@@ -303,7 +310,61 @@ function slotAddLinks(day: ExportDay, slotIdx: number): string {
   return `<span class="slot-add">Add:
     <button type="button" class="ics-link slot-ics" data-slot="${slotIdx}">Apple / .ics</button> ·
     <a href="${googleUrl(day, slot)}" target="_blank" rel="noopener">Google</a> ·
-    <a href="${outlookUrl(day, slot)}" target="_blank" rel="noopener">Outlook</a></span>`;
+    <a href="${outlookUrl(day, slot)}" target="_blank" rel="noopener">Outlook</a> ·
+    <button type="button" class="ics-link slot-badge" data-slot="${slotIdx}">Watch badge</button></span>`;
+}
+
+/** #56: adapt an ExportDay to the badge renderer's input. */
+function badgeDayFor(day: ExportDay): BadgeDay | null {
+  const target = currentTarget();
+  if (!target) return null;
+  return { plan: day.plan, targetId: target.id, targetName: day.targetName, locationName: day.locationName };
+}
+
+// #56: the shared badge pop-out menu (#badge-menu in index.html). One
+// menu serves every badge control; the opening control supplies the
+// action, the two rows supply only the platform. Anchoring and close
+// behavior follow the #35 menus.
+let badgeMenuAction: ((platform: BadgePlatform) => void) | null = null;
+
+function closeBadgeMenu(): void {
+  const menu = $("#badge-menu");
+  if (menu) menu.hidden = true;
+  badgeMenuAction = null;
+}
+
+function openBadgeMenu(anchor: HTMLElement, action: (platform: BadgePlatform) => void): void {
+  const menu = $("#badge-menu");
+  if (!menu) return;
+  const willOpen = menu.hidden || badgeMenuAnchor !== anchor;
+  closeInfoMenu();
+  closePrintMenu();
+  if (!willOpen) {
+    closeBadgeMenu();
+    badgeMenuAnchor = null;
+    return;
+  }
+  badgeMenuAction = action;
+  badgeMenuAnchor = anchor;
+  menu.hidden = false;
+  placeMenu(anchor, menu);
+}
+
+let badgeMenuAnchor: HTMLElement | null = null;
+
+/** #56: wire every per-slot "Watch badge" link under a rendered root. */
+function wireBadgeLinks(root: ParentNode, day: ExportDay): void {
+  root.querySelectorAll<HTMLElement>(".slot-badge").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.slot ?? "", 10);
+      const badgeDay = badgeDayFor(day);
+      if (!badgeDay || !day.plan.slots[idx]) return;
+      openBadgeMenu(btn, (platform) => {
+        void downloadSlotBadge(badgeDay, idx, platform).catch(() => undefined);
+      });
+    });
+  });
 }
 
 /** #43: wire every per-slot .ics download button under a rendered root. */
@@ -671,6 +732,7 @@ function renderPlanner(): void {
     ${slotCardHtml(day, plan)}
     <div class="row export-row">
       <button type="button" id="export-day">Export this day (.ics)</button>
+      <button type="button" id="badge-day">Watch badge</button>
     </div>
     <section class="details-sec">
       <h3>Day details — ${esc(target.name)}</h3>
@@ -684,6 +746,7 @@ function renderPlanner(): void {
       </p>
     </section>`;
   wireSlotIcs(el, day);
+  wireBadgeLinks(el, day);
   el.querySelectorAll<HTMLElement>(".wk-day").forEach((b) =>
     b.addEventListener("click", () => jumpToDay(parseInt(b.dataset.offset ?? "0", 10))),
   );
@@ -703,6 +766,16 @@ function renderPlanner(): void {
       downloadIcs([day], {
         includeTypical: state.settings.includeTypical,
         includeDontGo: state.settings.includeDontGo,
+      });
+    });
+  const badgeBtn = $("#badge-day");
+  if (badgeBtn)
+    badgeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const badgeDay = badgeDayFor(day);
+      if (!badgeDay) return;
+      openBadgeMenu(badgeBtn, (platform) => {
+        void downloadDayBadge(badgeDay, platform).catch(() => undefined);
       });
     });
 }
@@ -774,6 +847,7 @@ function renderTrends(): void {
       <div class="row export-row export-row-top">
         <button type="button" id="export-week">Export week (.ics)</button>
         <button type="button" id="export-month">Export month (.ics)</button>
+        <button type="button" id="badge-week">Week badge</button>
       </div>
       ${blocks.join("")}
       ${chips}
@@ -801,6 +875,18 @@ function renderTrends(): void {
   };
   $("#export-week").addEventListener("click", () => exportRange(7));
   $("#export-month").addEventListener("click", () => exportRange(30));
+  // #56: the week badge covers the same 7 strip days as Export week.
+  $("#badge-week").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const btn = $("#badge-week");
+    const days = Array.from({ length: 7 }, (_, i) => badgeDayFor(exportDayFor(addDaysKey(start, i)))).filter(
+      (d): d is BadgeDay => d !== null,
+    );
+    if (!days.length) return;
+    openBadgeMenu(btn, (platform) => {
+      void downloadWeekBadge(days, platform).catch(() => undefined);
+    });
+  });
 
   // #53: the "Best days this week" chips open the same day detail as the
   // week/month squares — panel at desktop widths, modal below.
@@ -855,7 +941,7 @@ function render(): void {
 
 /** Full day detail markup — shared by the modal (narrow widths) and the
  *  Trends side panel (desktop widths, #28). */
-function dayDetailHtml(key: string): string {
+function dayDetailHtml(key: string, compact = false): string {
   const plan = planForKey(key);
   const target = currentTarget();
   if (!target) return "";
@@ -888,8 +974,9 @@ function dayDetailHtml(key: string): string {
     <div class="verdict verdict-${bandKey(plan)}">Day: ${bandWord(plan).toUpperCase()}</div>
     ${heldBackBannerHtml(plan)}
     <div class="row modal-actions">
-      <button type="button" class="plan-this-day">Plan this day</button>
-      <button type="button" class="export-this-day">Export this day (.ics)</button>
+      <button type="button" class="plan-this-day">${compact ? "Plan" : "Plan this day"}</button>
+      <button type="button" class="export-this-day">${compact ? "Export (.ics)" : "Export this day (.ics)"}</button>
+      <button type="button" class="badge-this-day">Watch badge</button>
     </div>
     ${slotsHtml}
     ${
@@ -925,6 +1012,17 @@ function wireDayDetail(root: HTMLElement, key: string): void {
       });
     });
   wireSlotIcs(root, exportDayFor(key));
+  wireBadgeLinks(root, exportDayFor(key));
+  const badgeBtn = root.querySelector<HTMLElement>(".badge-this-day");
+  if (badgeBtn)
+    badgeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const badgeDay = badgeDayFor(exportDayFor(key));
+      if (!badgeDay) return;
+      openBadgeMenu(badgeBtn, (platform) => {
+        void downloadDayBadge(badgeDay, platform).catch(() => undefined);
+      });
+    });
 }
 
 /** #28: at desktop widths the Trends day detail opens in a side panel;
@@ -935,7 +1033,7 @@ function openDayDetail(key: string): void {
   if (window.matchMedia("(min-width: 75em)").matches) {
     const panel = $("#day-panel");
     if (panel) {
-      panel.innerHTML = `<h3>${esc(fmtDay(key))} — ${esc(target.name)}</h3>${dayDetailHtml(key)}`;
+      panel.innerHTML = `<h3>${esc(fmtDay(key))} — ${esc(target.name)}</h3>${dayDetailHtml(key, true)}`;
       wireDayDetail(panel, key);
       panel.scrollIntoView({ block: "nearest" });
       return;
@@ -1851,6 +1949,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#info-btn").addEventListener("click", (e) => {
     e.stopPropagation();
     closePrintMenu();
+    closeBadgeMenu();
+    badgeMenuAnchor = null;
     const menu = $("#info-menu");
     const willOpen = menu.hidden;
     menu.hidden = !willOpen;
@@ -1868,6 +1968,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#print-btn").addEventListener("click", (e) => {
     e.stopPropagation();
     closeInfoMenu();
+    closeBadgeMenu();
+    badgeMenuAnchor = null;
     const menu = $("#print-menu");
     const willOpen = menu.hidden;
     menu.hidden = !willOpen;
@@ -1876,8 +1978,19 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
   // #35: an open menu closes when the page scrolls or resizes (the
   // button it hangs from has moved).
-  window.addEventListener("scroll", () => { closeInfoMenu(); closePrintMenu(); }, { passive: true });
-  window.addEventListener("resize", () => { closeInfoMenu(); closePrintMenu(); });
+  window.addEventListener("scroll", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); }, { passive: true });
+  window.addEventListener("resize", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); });
+  // #56: the badge menu's two rows supply only the platform; the
+  // opening control supplied the action (openBadgeMenu).
+  document.querySelectorAll<HTMLElement>("#badge-menu [data-badge-platform]").forEach((item) =>
+    item.addEventListener("click", () => {
+      const action = badgeMenuAction;
+      const platform = item.dataset.badgePlatform as BadgePlatform;
+      closeBadgeMenu();
+      badgeMenuAnchor = null;
+      if (action && (platform === "apple" || platform === "android")) action(platform);
+    }),
+  );
   $("#print-day").addEventListener("click", () => {
     closePrintMenu();
     doPrint("day");
@@ -1895,6 +2008,11 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (!menu.hidden && !menu.contains(e.target as Node)) closeInfoMenu();
     const pmenu = $("#print-menu");
     if (!pmenu.hidden && !pmenu.contains(e.target as Node)) closePrintMenu();
+    const bmenu = $("#badge-menu");
+    if (bmenu && !bmenu.hidden && !bmenu.contains(e.target as Node)) {
+      closeBadgeMenu();
+      badgeMenuAnchor = null;
+    }
   });
   $("#info-content").innerHTML = INFO_HTML;
   document.querySelectorAll<HTMLElement>(".modal-close").forEach((b) =>
@@ -1925,6 +2043,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   // decided 2026-11-12) → pick list.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    if ($("#badge-menu") && !$("#badge-menu").hidden) {
+      closeBadgeMenu();
+      badgeMenuAnchor = null;
+      return;
+    }
     if (!$("#print-menu").hidden) {
       closePrintMenu();
       return;
@@ -1969,7 +2092,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.6";
+  let versionLabel = "Zero Light 0.4.7";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.

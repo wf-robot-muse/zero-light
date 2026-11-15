@@ -431,10 +431,12 @@ try {
   await page.click("#trends .day-block >> nth=2");
   await page.waitForSelector("#day-modal:not([hidden])", { timeout: 8000 });
   const t50a = await page.evaluate(() => {
+    // #56: the row now holds three buttons (Plan / Export / Watch
+    // badge) — the #50 rule is unchanged: all on one row, no wrap.
     const btns = [...document.querySelectorAll("#day-modal .modal-actions > button")];
-    if (btns.length !== 2) return null;
-    const [a, b] = btns.map((x) => x.getBoundingClientRect());
-    return Math.abs(a.top - b.top) <= 1;
+    if (btns.length !== 3) return null;
+    const tops = btns.map((x) => x.getBoundingClientRect().top);
+    return Math.max(...tops) - Math.min(...tops) <= 1;
   });
   check("#50 modal action buttons share one row", t50a === true);
   await page.click('#day-modal .modal-close');
@@ -508,10 +510,12 @@ try {
 
   // v0.4.6 — #50 panel form + #53 panel form.
   const t50b = await page.evaluate(() => {
+    // #56: three buttons now (compact Plan / Export (.ics) / Watch
+    // badge) — all must still share one row in the 306px panel.
     const btns = [...document.querySelectorAll("#day-panel .modal-actions > button")];
-    if (btns.length !== 2) return null;
-    const [a, b] = btns.map((x) => x.getBoundingClientRect());
-    return Math.abs(a.top - b.top) <= 1;
+    if (btns.length !== 3) return null;
+    const tops = btns.map((x) => x.getBoundingClientRect().top);
+    return Math.max(...tops) - Math.min(...tops) <= 1;
   });
   check("#50 panel action buttons share one row", t50b === true);
   const chipKey = await page.evaluate(
@@ -913,6 +917,88 @@ try {
     "#48 Windows shell keeps window.print",
     !prWin.calls.includes("print_page") && prWin.winPrint === 1,
   );
+
+  // v0.4.7 — #56: watch badges in the web build (no Tauri bridge).
+  // Every badge control opens the two-row Apple/Android pop-out, and
+  // picking a platform downloads a real PNG at the locked pixel size
+  // (Apple 416x496 @2x = 832x992; Android 480x480 @2x = 960x960).
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 950 }, acceptDownloads: true });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.fill("#place-search", "27.9506, -82.4572");
+    await p.press("#place-search", "Enter");
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
+      null,
+      { timeout: 20000 },
+    );
+    await p.selectOption("#target", "redfish");
+    await p.waitForSelector("#plan-side .hero", { timeout: 20000 });
+
+    check("#56 planner has a Watch badge button", (await p.locator("#badge-day").count()) === 1);
+    check("#56 slot card has a Watch badge link", (await p.locator(".slot-badge").count()) >= 1);
+
+    async function badgeDownload(openMenu, platform) {
+      await openMenu();
+      await p.waitForSelector("#badge-menu:not([hidden])", { timeout: 8000 });
+      const items = await p.locator("#badge-menu [data-badge-platform]").count();
+      const dlPromise = p.waitForEvent("download", { timeout: 15000 });
+      await p.click(`#badge-menu [data-badge-platform='${platform}']`);
+      const dl = await dlPromise;
+      const path = await dl.path();
+      const buf = path ? await readFile(path) : Buffer.alloc(0);
+      return {
+        items,
+        name: dl.suggestedFilename(),
+        size: buf.length,
+        w: buf.length > 24 ? buf.readUInt32BE(16) : 0,
+        h: buf.length > 24 ? buf.readUInt32BE(20) : 0,
+      };
+    }
+
+    const slot = await badgeDownload(() => p.click(".slot-badge >> nth=0"), "apple");
+    check("#56 badge menu has exactly the Apple and Android rows", slot.items === 2);
+    check(
+      "#56 slot badge downloads an 832x992 PNG",
+      /zero-light-badge-slot-apple-.*\.png$/.test(slot.name) && slot.size > 2000 && slot.w === 832 && slot.h === 992,
+    );
+
+    const day = await badgeDownload(() => p.click("#badge-day"), "apple");
+    check(
+      "#56 planner day badge downloads a PNG",
+      /zero-light-badge-day-apple-.*\.png$/.test(day.name) && day.size > 2000 && day.w === 832 && day.h === 992,
+    );
+
+    await p.click('#view-picker .chip[data-view="trends"]');
+    await p.waitForFunction(() => document.querySelectorAll("#trends .day-block").length >= 30, null, {
+      timeout: 20000,
+    });
+    check("#56 trends has a Week badge button", (await p.locator("#badge-week").count()) === 1);
+    const week = await badgeDownload(() => p.click("#badge-week"), "apple");
+    check(
+      "#56 week badge downloads a PNG",
+      /zero-light-badge-week-apple-.*\.png$/.test(week.name) && week.size > 2000 && week.w === 832 && week.h === 992,
+    );
+
+    // Day detail in the desktop panel: compact labels + badge button,
+    // and the Android badge is a 960x960 PNG.
+    await p.click("#trends .day-block >> nth=2");
+    await p.waitForSelector("#day-panel .badge-this-day", { timeout: 8000 });
+    const planLabel = await p.locator("#day-panel .plan-this-day").textContent();
+    const exportLabel = await p.locator("#day-panel .export-this-day").textContent();
+    check(
+      "#56 day panel uses the compact action labels",
+      planLabel?.trim() === "Plan" && exportLabel?.trim() === "Export (.ics)",
+    );
+    const panelDay = await badgeDownload(() => p.click("#day-panel .badge-this-day"), "android");
+    check(
+      "#56 day-panel Android badge downloads a 960x960 PNG",
+      /zero-light-badge-day-android-.*\.png$/.test(panelDay.name) && panelDay.size > 2000 && panelDay.w === 960 && panelDay.h === 960,
+    );
+    await ctx.close();
+  }
 } catch (err) {
   console.log("ERROR", err.message);
   failures.push("exception: " + err.message);
