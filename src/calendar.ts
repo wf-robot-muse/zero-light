@@ -128,8 +128,11 @@ export function buildIcs(days: ExportDay[], opts: { includeTypical: boolean; inc
  *  default "zero-light-plans.ics") and the file is written to exactly
  *  the path they chose — cancelling writes nothing. On the web the
  *  build is unchanged: the browser's own download with the fixed name
- *  (Wade's scope call, 2026-11-14: desktop only). The shell is detected
- *  once through the app's own shell_info command. */
+ *  (Wade's scope call, 2026-11-14: desktop only). Item #62 added the
+ *  phone route (decision D2): on iOS/Android the same text goes to the
+ *  system share sheet via src/share.ts, because a phone has no Save As
+ *  dialog and no downloads folder flow. The shell is detected once
+ *  through the app's own shell_info command. */
 let shellOsCache: string | null | undefined;
 
 export async function detectShellOs(): Promise<string | null> {

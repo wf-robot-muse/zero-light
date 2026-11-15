@@ -4,13 +4,26 @@
 // on macOS (#47). The dialog/fs plugins (#49) give .ics exports a native
 // Save As in the desktop apps.
 //
+// Item #62 added the phone shells (iOS, Android/Fire OS). Two more
+// plugins register below: the official geolocation plugin (the phone
+// route for "Use my location"; its permissions live in
+// capabilities/mobile.json, so desktop builds never see them) and this
+// project's own zlshare plugin (src-tauri/plugins/tauri-plugin-zlshare),
+// which hands a finished file to the phone's share sheet — that is how
+// exports, badges, and print PDFs leave the app on a phone, since a
+// phone has no Save As dialog. print_page() is desktop-only because
+// WebviewWindow::print does not exist on mobile; the mobile build gets
+// a stub that errors, and the frontend never calls it there (phones
+// print through the PDF share route instead).
+//
 // In plain words: this is the app's thin native shell. It exists so the
-// same web interface can run inside a desktop window and still reach
-// the handful of operating-system abilities a web page is not allowed
-// to touch. What the shell may do is deliberately narrow: the exact
-// permissions are listed in src-tauri/capabilities/default.json (show
-// a save dialog, write a file the user picked — nothing else), and
-// the frontend learns which OS it is running on from shell_info() and
+// same web interface can run inside a desktop or phone window and still
+// reach the handful of operating-system abilities a web page is not
+// allowed to touch. What the shell may do is deliberately narrow: the
+// exact permissions are listed in src-tauri/capabilities/default.json
+// for desktop (show a save dialog, write a file the user picked —
+// nothing else) and capabilities/mobile.json for phones, and the
+// frontend learns which OS it is running on from shell_info() and
 // branches its behaviour accordingly.
 
 #[tauri::command]

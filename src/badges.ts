@@ -592,7 +592,8 @@ function renderWeekBadge(days: BadgeDay[], platform: BadgePlatform): HTMLCanvasE
   return canvas;
 }
 
-// ---- save route (#49 pattern: native Save As on desktop, download on web) --
+// ---- save route (#49 pattern: native Save As on desktop, download on
+// web; #62 added the phone share-sheet route in savePng below) --
 
 async function savePng(blob: Blob, filename: string): Promise<void> {
   const os = await detectShellOs();
