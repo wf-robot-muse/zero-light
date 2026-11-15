@@ -926,6 +926,26 @@ function syncPrintBtn(): void {
   if (btn) btn.disabled = !(state.place && currentTarget());
 }
 
+/** #58: Plan / Export / Badge button labels must never wrap. CSS sets
+ *  white-space: nowrap and a smaller base size; this enforces the fit
+ *  under any platform's font metrics — a button whose label still
+ *  overflows gets its font stepped down until it fits on one line.
+ *  Runs after every render and on resize; hidden buttons (clientWidth
+ *  0) are skipped and refit when their container is shown. */
+function fitActionButtons(): void {
+  document
+    .querySelectorAll<HTMLElement>(".modal-actions > button, .export-row > button")
+    .forEach((btn) => {
+      if (!btn.clientWidth) return;
+      btn.style.fontSize = "";
+      let size = parseFloat(getComputedStyle(btn).fontSize);
+      while (btn.scrollWidth > btn.clientWidth + 1 && size > 10) {
+        size -= 0.5;
+        btn.style.fontSize = `${size}px`;
+      }
+    });
+}
+
 function render(): void {
   syncPrintBtn();
   const planner = state.view === "planner";
@@ -935,6 +955,7 @@ function render(): void {
   $("#trends").hidden = planner;
   if (planner) renderPlanner();
   else renderTrends();
+  fitActionButtons();
 }
 
 // ------------------------------------------------------------- day modal
@@ -1023,6 +1044,7 @@ function wireDayDetail(root: HTMLElement, key: string): void {
         void downloadDayBadge(badgeDay, platform).catch(() => undefined);
       });
     });
+  fitActionButtons();
 }
 
 /** #28: at desktop widths the Trends day detail opens in a side panel;
@@ -1044,6 +1066,7 @@ function openDayDetail(key: string): void {
   content.innerHTML = dayDetailHtml(key);
   wireDayDetail(content, key);
   $("#day-modal").hidden = false;
+  fitActionButtons();
 }
 
 // ------------------------------------------------------------- explainer
@@ -1979,7 +2002,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // #35: an open menu closes when the page scrolls or resizes (the
   // button it hangs from has moved).
   window.addEventListener("scroll", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); }, { passive: true });
-  window.addEventListener("resize", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); });
+  window.addEventListener("resize", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); fitActionButtons(); });
   // #56: the badge menu's two rows supply only the platform; the
   // opening control supplied the action (openBadgeMenu).
   document.querySelectorAll<HTMLElement>("#badge-menu [data-badge-platform]").forEach((item) =>
@@ -2092,7 +2115,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.7";
+  let versionLabel = "Zero Light 0.4.8";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.

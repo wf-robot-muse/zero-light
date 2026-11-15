@@ -504,7 +504,12 @@ button:hover { border-color: var(--accent); }
    font, and wider platform font metrics (macOS) pushed them onto two
    rows. No wrapping; the buttons may shrink a few px instead. */
 .modal-actions { margin-top: 12px; margin-bottom: 16px; gap: 10px; flex-wrap: nowrap; }
-.modal-actions > button { min-width: 0; padding-left: 0.8em; padding-right: 0.8em; }
+/* #58: Plan / Export / Badge labels never wrap — the label shrinks
+   instead. fitActionButtons (main.ts) steps the font down until the
+   label fits on one line, so this holds under any platform's font
+   metrics; these smaller base sizes keep that rare. */
+.modal-actions > button { min-width: 0; padding-left: 0.7em; padding-right: 0.7em; font-size: 0.86em; white-space: nowrap; }
+.export-row > button { font-size: 0.9em; white-space: nowrap; min-width: 0; }
 .check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 0.95em; cursor: pointer; }
 #theme-picker { flex-wrap: wrap; }
 

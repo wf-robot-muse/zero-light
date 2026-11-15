@@ -160,6 +160,17 @@ function spacing(ctx: CanvasRenderingContext2D, px: number): void {
 }
 
 /** Draw text at the geo's alignment; returns its width. */
+/** Badge-only location cleanup (#57): drop a trailing country suffix
+ *  ("…, United States of America") and the comma it leaves behind.
+ *  The app's own location label is unchanged. */
+function badgeLocation(name: string): string {
+  const cleaned = name
+    .replace(/[,\s]*(United States of America|United States|USA)\s*$/i, "")
+    .replace(/[,\s]+$/, "")
+    .trim();
+  return cleaned || name;
+}
+
 function text(
   ctx: CanvasRenderingContext2D,
   geo: Geo,
@@ -169,13 +180,25 @@ function text(
   size: number,
   color: string,
   alpha = 1,
+  shadow = false,
 ): number {
   setFont(ctx, weight, size);
   ctx.fillStyle = color;
   ctx.globalAlpha = alpha;
   ctx.textAlign = geo.center ? "center" : "left";
   const x = geo.center ? geo.x + geo.cw / 2 : geo.x;
+  if (shadow) {
+    // Soft dark halo so the line stays readable over the stencil ghost.
+    ctx.shadowColor = "rgba(0,0,0,0.45)";
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 1;
+  }
   ctx.fillText(s, x, y, geo.cw);
+  if (shadow) {
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+  }
   ctx.globalAlpha = 1;
   ctx.textAlign = "left";
   return ctx.measureText(s).width;
@@ -323,11 +346,19 @@ async function drawStencil(
 ): Promise<void> {
   const img = await loadImage(stencilUrl(targetId));
   if (!img) return;
-  const size = geo.w * 0.98;
+  // #57: preserve the source aspect ratio. The stencil webps are not
+  // square — the fish are 2:1 and mallard/turkey/whitetail are 3:2 — so
+  // drawing into a square box squashes them. Anchor the width and let
+  // the height follow the image, the same approach as the hero stencil
+  // (which sets a height and lets the width follow).
+  const aspect = img.naturalWidth / img.naturalHeight;
+  if (!aspect || !isFinite(aspect)) return;
+  const w = geo.w * 0.98;
+  const h = w / aspect;
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.globalCompositeOperation = "screen";
-  ctx.drawImage(img, geo.w - size * 0.82, geo.top - 30, size, size);
+  ctx.drawImage(img, geo.w - w * 0.82, geo.top - 30, w, h);
   ctx.restore();
 }
 
@@ -352,7 +383,7 @@ async function renderSlotBadge(day: BadgeDay, slotIndex: number, platform: Badge
   y += 18;
   pill(ctx, geo, `${slot.labelSymbol} ${slotLabelWord(slot).toUpperCase()} · SCORE ${Math.round(slot.score)}`, y, 15, "rgba(0,0,0,0.25)", "#FFFFFF");
   y += 52;
-  text(ctx, geo, `${dayLabel(plan.dateKey)} · ${day.locationName}`, y, 600, 16, "#FFFFFF", 0.94);
+  text(ctx, geo, `${dayLabel(plan.dateKey)} · ${badgeLocation(day.locationName)}`, y, 700, 17, "#FFFFFF", 1, true);
   y += 26;
   setFont(ctx, 500, 15);
   for (const line of wrapLines(ctx, slot.reason, geo.cw, 2)) {
@@ -390,7 +421,7 @@ async function renderDayBadge(day: BadgeDay, platform: BadgePlatform): Promise<H
   const verdictWord = plan.veto ? "DON'T GO" : `${plan.verdict.toUpperCase()} DAY`;
   pill(ctx, geo, verdictWord, y, 16, "rgba(0,0,0,0.25)", "#FFFFFF");
   y += 56;
-  text(ctx, geo, `${day.targetName} · ${day.locationName}`, y, 600, 16, "#FFFFFF", 0.94);
+  text(ctx, geo, `${day.targetName} · ${badgeLocation(day.locationName)}`, y, 700, 17, "#FFFFFF", 1, true);
   y += 14;
 
   if (plan.veto) {
@@ -459,8 +490,8 @@ function renderWeekBadge(days: BadgeDay[], platform: BadgePlatform): HTMLCanvasE
   const weekOf = parseKey(first.plan.dateKey)
     .toLocaleDateString("en-US", { month: "short", day: "numeric" })
     .toUpperCase();
-  const eyebrow = `WEEK OF ${weekOf} · ${first.targetName.toUpperCase()} · ${first.locationName.toUpperCase()}`;
-  text(ctx, geo, eyebrow, y, 800, 13.5, "#FFFFFF", 0.8);
+  const eyebrow = `WEEK OF ${weekOf} · ${first.targetName.toUpperCase()} · ${badgeLocation(first.locationName).toUpperCase()}`;
+  text(ctx, geo, eyebrow, y, 800, 13.5, "#FFFFFF", 0.92);
   spacing(ctx, 0);
 
   // W1: only the three best days get full rows.

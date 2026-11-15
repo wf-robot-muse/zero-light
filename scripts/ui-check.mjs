@@ -997,6 +997,75 @@ try {
       "#56 day-panel Android badge downloads a 960x960 PNG",
       /zero-light-badge-day-android-.*\.png$/.test(panelDay.name) && panelDay.size > 2000 && panelDay.w === 960 && panelDay.h === 960,
     );
+
+    // v0.4.8 — #58: Plan / Export / Badge labels never wrap; they
+    // shrink to fit (fitActionButtons). Every visible action button's
+    // label must be exactly one line with no horizontal overflow.
+    async function assertOneLine(scopeSel, label) {
+      const res = await p.evaluate((sel) => {
+        const out = [];
+        document.querySelectorAll(sel).forEach((btn) => {
+          if (!btn.clientWidth) return;
+          const r = document.createRange();
+          r.selectNodeContents(btn);
+          out.push({
+            lines: r.getClientRects().length,
+            fits: btn.scrollWidth <= btn.clientWidth + 1,
+          });
+        });
+        return out;
+      }, scopeSel);
+      check(
+        `#58 ${label}: labels on one line, no overflow`,
+        res.length > 0 && res.every((b) => b.lines === 1 && b.fits),
+      );
+    }
+    // The row itself must also fit its container (flex overflow would
+    // clip the last button even with every label on one line).
+    async function assertRowFits(rowSel, label) {
+      const res = await p.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el || !el.clientWidth) return null;
+        return { sw: el.scrollWidth, cw: el.clientWidth };
+      }, rowSel);
+      check(`#58 ${label}: row fits its container`, !!res && res.sw <= res.cw + 1);
+    }
+    await assertOneLine("#trends .export-row > button", "trends export row");
+    await assertRowFits("#trends .export-row", "trends export row");
+    await assertOneLine("#day-panel .modal-actions > button", "day panel actions");
+    await assertRowFits("#day-panel .modal-actions", "day panel actions");
+    // Planner export row (switch views first).
+    await p.click("#view-picker [data-view='planner']");
+    await p.waitForSelector("#badge-day", { state: "visible", timeout: 8000 });
+    await assertOneLine("#planner .export-row > button", "planner export row");
+    await assertRowFits("#planner .export-row", "planner export row");
+    await p.click("#view-picker [data-view='trends']");
+    await p.waitForSelector("#badge-week", { state: "visible", timeout: 8000 });
+    // Day modal at phone width.
+    await p.setViewportSize({ width: 390, height: 844 });
+    await p.click("#trends .day-block >> nth=1");
+    await p.waitForSelector("#day-modal .modal-actions > button", { state: "visible", timeout: 8000 });
+    await assertOneLine("#day-modal .modal-actions > button", "day modal actions (phone)");
+    await assertRowFits("#day-modal .modal-actions", "day modal actions (phone)");
+    await p.click("#day-modal .modal-close");
+    await p.setViewportSize({ width: 1440, height: 950 });
+    await p.waitForTimeout(200);
+    // Stress: a 25% larger root font (wider-metrics stand-in) must not
+    // wrap anything either — the resize refit shrinks the labels. The
+    // viewport widens too, so the 75em tier (now 1500px) still applies
+    // and the day panel stays in its desktop form.
+    await p.addStyleTag({ content: "html { font-size: 20px !important; }" });
+    await p.setViewportSize({ width: 1600, height: 950 });
+    // Re-open the day panel under the stressed metrics (a view switch
+    // resets the panel to its skeleton, so it must be repopulated).
+    await p.click("#trends .day-block >> nth=2");
+    await p.waitForSelector("#day-panel .badge-this-day", { state: "visible", timeout: 8000 });
+    await p.evaluate(() => window.dispatchEvent(new Event("resize")));
+    await p.waitForTimeout(200);
+    await assertOneLine("#trends .export-row > button", "trends export row under font stress");
+    await assertRowFits("#trends .export-row", "trends export row under font stress");
+    await assertOneLine("#day-panel .modal-actions > button", "day panel actions under font stress");
+    await assertRowFits("#day-panel .modal-actions", "day panel actions under font stress");
     await ctx.close();
   }
 } catch (err) {
