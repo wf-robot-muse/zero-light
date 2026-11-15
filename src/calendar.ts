@@ -146,6 +146,13 @@ export async function detectShellOs(): Promise<string | null> {
 
 async function saveIcsText(text: string): Promise<void> {
   const os = await detectShellOs();
+  // #62 (decision D2): in the phone apps the file leaves through the
+  // share sheet — there is no Save As dialog on iOS/Android.
+  if (os === "ios" || os === "android") {
+    const { shareTextFile } = await import("./share");
+    await shareTextFile("zero-light-plans.ics", text, "text/calendar");
+    return;
+  }
   if (os) {
     const { save } = await import("@tauri-apps/plugin-dialog");
     const { writeTextFile } = await import("@tauri-apps/plugin-fs");

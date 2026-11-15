@@ -1,0 +1,53 @@
+# Item #62: iOS unsigned compile check (macos-15, per the #54 rule
+# that platform builds live in their own workflow files).
+#
+# Scope (decision D4): free-tier testing only. CI cannot hold Wade's
+# Personal Team signing, so this job proves the iOS code compiles and
+# links for a real device target with signing switched off. The
+# signed install build happens in Xcode on Wade's iMac, where he
+# selects his Personal Team (see the setup manual, Part 9).
+name: Tauri iOS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: iOS unsigned compile check
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Rust (iOS targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build the frontend (the Xcode build phase embeds dist/)
+        run: npm run build
+
+      - name: Compile for iOS (signing off)
+        run: |
+          xcodebuild build \
+            -project src-tauri/gen/apple/zero-light.xcodeproj \
+            -scheme zero-light_iOS \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO

@@ -1,0 +1,21 @@
+[package]
+name = "tauri-plugin-zlshare"
+version = "0.1.0"
+description = "Zero Light's own share-sheet plugin (item #62): hand one file to the iOS/Android share sheet. Written for this app because the available community share plugin omits FLAG_GRANT_READ_URI_PERMISSION on Android (receiving apps cannot open the file) and declares legacy storage permissions the app does not need."
+authors = ["WF-Robot Muse"]
+license = "LicenseRef-AllRightsReserved"
+edition = "2021"
+rust-version = "1.77.2"
+links = "tauri-plugin-zlshare"
+
+[lib]
+name = "tauri_plugin_zlshare"
+
+[dependencies]
+tauri = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = "2"

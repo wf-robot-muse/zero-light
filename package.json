@@ -3,6 +3,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "@tauri-apps/plugin-fs": "^2.7.1",
+    "@tauri-apps/plugin-geolocation": "^2.5.0",
     "leaflet": "^1.9.4",
     "suncalc": "^2.1.4"
   },
@@ -24,5 +25,5 @@
     "test:ui": "node scripts/ui-check.mjs"
   },
   "type": "module",
-  "version": "0.4.9"
+  "version": "0.5.0"
 }

@@ -1,0 +1,10 @@
+/src/main/**/generated
+/src/main/jniLibs/**/*.so
+/src/main/assets/tauri.conf.json
+/tauri.build.gradle.kts
+/proguard-tauri.pro
+/tauri.properties
+# Item #62: signing material is written by CI from repo secrets (and
+# locally by hand) — it must never be committed.
+/keystore.properties
+/*.jks

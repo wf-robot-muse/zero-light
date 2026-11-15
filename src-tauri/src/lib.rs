@@ -35,9 +35,21 @@ fn shell_info() -> serde_json::Value {
 /// opens the real macOS print dialog for the webview contents (the
 /// existing @media print sheet). The frontend calls this only on macOS;
 /// Windows/Linux webviews handle window.print() themselves.
+///
+/// #62: `WebviewWindow::print` exists only on desktop targets, so the
+/// mobile build gets a stub that errors — the frontend never calls it
+/// there (mobile print is share-to-PDF, decision D1), but the command
+/// must exist for the handler table to compile on iOS/Android.
+#[cfg(desktop)]
 #[tauri::command]
 fn print_page(window: tauri::WebviewWindow) -> Result<(), String> {
     window.print().map_err(|e| e.to_string())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn print_page() -> Result<(), String> {
+    Err("unsupported".to_string())
 }
 
 /// #47 (macOS): one-shot location fix from CoreLocation. WKWebView
@@ -208,6 +220,13 @@ pub fn run() {
         // #49: native Save As + file write for .ics exports.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        // #62: location on iOS/Android goes through the official
+        // geolocation plugin (its permissions are granted only by the
+        // mobile capability file; on desktop the commands stay denied).
+        .plugin(tauri_plugin_geolocation::init())
+        // #62: the app's own share plugin (exports and print PDFs hand
+        // files to the iOS/Android share sheet; mobile capability only).
+        .plugin(tauri_plugin_zlshare::init())
         // #47: let the webview's geolocation through on the platforms
         // whose webview permission layer gates it (Windows/WebView2,
         // Linux/WebKitGTK). The OS-level location switch still governs

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Item #62: Tauri merges this file into the generated iOS app's
+     Info.plist at build time. Same wording as the desktop Info.plist
+     (item #47): iOS shows this sentence in the location prompt. -->
+<plist version="1.0">
+<dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Used to find your best hunting and fishing times.</string>
+</dict>
+</plist>

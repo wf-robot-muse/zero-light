@@ -101,6 +101,13 @@ body { margin: 0; }
   max-width: 560px;
   margin: 0 auto;
   padding: 20px 16px 48px;
+  /* #62: in the phone apps, keep content clear of the notch and the
+     gesture bar. env() is 0 on desktop and web, so the max() keeps
+     the existing spacing there and only the app shells grow. */
+  padding-top: max(20px, env(safe-area-inset-top));
+  padding-bottom: max(48px, env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
 }
 
 h1 { font-size: 1.55em; margin: 0; letter-spacing: -0.01em; }

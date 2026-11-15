@@ -918,6 +918,142 @@ try {
     !prWin.calls.includes("print_page") && prWin.winPrint === 1,
   );
 
+  // v0.5.0 — #62: with a mocked iOS bridge, the phone routes work:
+  // location comes from the geolocation plugin, and exports, badges,
+  // and print all leave through the share sheet (an fs write into the
+  // app cache folder, then plugin:zlshare|share_file) — no dialogs,
+  // no browser downloads.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(() => {
+      window.__bridgeCalls = [];
+      window.__shareCalls = [];
+      window.__fsWrites = [];
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (cmd, args, options) => {
+          window.__bridgeCalls.push(cmd);
+          if (cmd === "app_info") return "Zero Light 0.5.0 — Tauri 2";
+          if (cmd === "shell_info") return { os: "ios", arch: "arm64" };
+          if (cmd === "plugin:geolocation|check_permissions") {
+            return { location: "granted", coarseLocation: "granted" };
+          }
+          if (cmd === "plugin:geolocation|request_permissions") {
+            return { location: "granted", coarseLocation: "granted" };
+          }
+          if (cmd === "plugin:geolocation|get_current_position") {
+            return {
+              coords: {
+                latitude: 27.9506,
+                longitude: -82.4572,
+                accuracy: 25,
+                altitude: null,
+                altitudeAccuracy: null,
+                heading: null,
+                speed: null,
+              },
+              timestamp: 1763251200000,
+            };
+          }
+          if (cmd === "plugin:path|resolve_directory") return "/app-cache";
+          if (cmd === "plugin:path|join") return args.paths.join("/");
+          if (cmd === "plugin:fs|write_file") {
+            const p = decodeURIComponent(options?.headers?.path ?? "");
+            window.__fsWrites.push({ path: p, bytes: Array.from(args ?? []) });
+            return null;
+          }
+          if (cmd === "plugin:zlshare|share_file") {
+            window.__shareCalls.push(args);
+            return null;
+          }
+          return null;
+        },
+      };
+    });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.fill("#place-search", "27.9506, -82.4572");
+    await p.press("#place-search", "Enter");
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
+      null,
+      { timeout: 20000 },
+    );
+    await p.selectOption("#target", "redfish");
+    await p.waitForSelector("#plan-side .hero", { timeout: 20000 });
+
+    // Location via the geolocation plugin; the fix reverse-labels and
+    // the place applies (search box shows the Tampa label).
+    await p.click("#geo-btn");
+    await p.waitForFunction(
+      () => window.__bridgeCalls.includes("plugin:geolocation|get_current_position"),
+      null,
+      { timeout: 8000 },
+    );
+    check("#62 iOS locate uses the geolocation plugin", true);
+    await p
+      .waitForFunction(
+        () => document.querySelector("#place-search")?.value.includes("Tampa"),
+        null,
+        { timeout: 8000 },
+      )
+      .catch(() => {});
+    const locLabel = await p.evaluate(() => document.querySelector("#place-search")?.value ?? "");
+    check("#62 iOS locate applies the plugin fix", locLabel.includes("Tampa"));
+
+    // Export this day → share sheet with a calendar file.
+    await p.click("#export-day");
+    await p.waitForFunction(() => window.__shareCalls.length >= 1, null, { timeout: 8000 });
+    let shares = await p.evaluate(() => window.__shareCalls);
+    let writes = await p.evaluate(() => window.__fsWrites);
+    check(
+      "#62 iOS .ics export shares a text/calendar file",
+      shares[0]?.mime === "text/calendar" &&
+        shares[0]?.path.endsWith("zero-light-plans.ics") &&
+        writes.some((w) => w.path.endsWith("zero-light-plans.ics") && w.bytes.length > 50),
+    );
+
+    // Watch badge → share sheet with a real PNG.
+    await p.click("#badge-day");
+    await p.waitForSelector("#badge-menu:not([hidden])", { timeout: 8000 });
+    await p.click("#badge-menu button >> nth=0");
+    await p.waitForFunction(() => window.__shareCalls.length >= 2, null, { timeout: 8000 });
+    shares = await p.evaluate(() => window.__shareCalls);
+    writes = await p.evaluate(() => window.__fsWrites);
+    const pngWrite = writes.find((w) => w.path.endsWith(".png"));
+    check(
+      "#62 iOS badge shares an image/png file",
+      shares[1]?.mime === "image/png" &&
+        !!pngWrite &&
+        pngWrite.bytes[0] === 0x89 &&
+        pngWrite.bytes[1] === 0x50,
+    );
+
+    // Print → share sheet with a real PDF carrying the sheet content.
+    // (The menu item is clicked through evaluate: at phone size a
+    // Playwright click first scrolls, and the #35 close-on-scroll
+    // rule would shut the menu before the click lands.)
+    await p.click("#print-btn");
+    await p.waitForSelector("#print-menu:not([hidden])", { timeout: 8000 });
+    await p.evaluate(() => document.querySelector("#print-menu button")?.click());
+    await p.waitForFunction(() => window.__shareCalls.length >= 3, null, { timeout: 8000 });
+    shares = await p.evaluate(() => window.__shareCalls);
+    writes = await p.evaluate(() => window.__fsWrites);
+    const pdfWrite = writes.find((w) => w.path.endsWith("zero-light-print-day.pdf"));
+    const pdfHead = pdfWrite
+      ? String.fromCharCode(...pdfWrite.bytes.slice(0, 6000))
+      : "";
+    check(
+      "#62 iOS print shares an application/pdf file",
+      shares[2]?.mime === "application/pdf" && !!pdfWrite,
+    );
+    check(
+      "#62 print PDF carries the sheet content",
+      pdfHead.startsWith("%PDF") && pdfHead.includes("ZERO LIGHT") && pdfHead.includes("Day rating"),
+    );
+    await ctx.close();
+  }
+
   // v0.4.7 — #56: watch badges in the web build (no Tauri bridge).
   // Every badge control opens the two-row Apple/Android pop-out, and
   // picking a platform downloads a real PNG at the locked pixel size

@@ -596,6 +596,13 @@ function renderWeekBadge(days: BadgeDay[], platform: BadgePlatform): HTMLCanvasE
 
 async function savePng(blob: Blob, filename: string): Promise<void> {
   const os = await detectShellOs();
+  // #62 (decision D2): in the phone apps the badge leaves through the
+  // share sheet (save to Photos, send, set as watch face from there).
+  if (os === "ios" || os === "android") {
+    const { shareFileBytes } = await import("./share");
+    await shareFileBytes(filename, new Uint8Array(await blob.arrayBuffer()), "image/png");
+    return;
+  }
   if (os) {
     const { save } = await import("@tauri-apps/plugin-dialog");
     const { writeFile } = await import("@tauri-apps/plugin-fs");

@@ -1,6 +1,6 @@
 [package]
 name = "zero-light"
-version = "0.4.9"
+version = "0.5.0"
 description = "Zero Light - best times to hunt and fish by location"
 authors = ["WF-Robot Muse"]
 edition = "2021"
@@ -24,6 +24,17 @@ serde_json = "1"
 # #49: native Save As dialog + write the user-chosen file (.ics exports).
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+# #62: official geolocation plugin — the location route on iOS/Android
+# (desktop keeps native_locate on macOS and the webview permission route
+# on Windows/Linux). Registered for all platforms; only the mobile
+# capability file grants its permissions.
+tauri-plugin-geolocation = "2"
+# #62: the share-sheet hand-off for exports on iOS/Android (decisions
+# D1/D2) is a first-party plugin in this repo (plugins/tauri-plugin-
+# zlshare): the available community share plugin omits
+# FLAG_GRANT_READ_URI_PERMISSION on Android, so receiving apps could
+# not open shared files, and it declares legacy storage permissions.
+tauri-plugin-zlshare = { path = "plugins/tauri-plugin-zlshare" }
 
 # #47 (macOS): native CoreLocation one-shot fix — WKWebView geolocation
 # can never prompt inside Tauri, so the app asks CoreLocation itself.

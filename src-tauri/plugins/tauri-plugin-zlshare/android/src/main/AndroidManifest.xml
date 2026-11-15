@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Deliberately empty: sharing the app's own files through the app's
+     FileProvider needs no permissions at all. (The community plugin
+     this replaces declared legacy READ/WRITE_EXTERNAL_STORAGE.) -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+</manifest>

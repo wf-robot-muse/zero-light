@@ -112,6 +112,7 @@ import {
   type PlaceCandidate,
 } from "./extras";
 import { downloadIcs, downloadSlotIcs, googleUrl, outlookUrl, type ExportDay } from "./calendar";
+import { buildPrintPdf, type PrintModel, type PrintSection } from "./printpdf";
 import {
   downloadDayBadge,
   downloadSlotBadge,
@@ -1357,12 +1358,65 @@ async function locateNativeMac(): Promise<void> {
  *  fix OK). #47: macOS takes the native route above; Windows/Linux
  *  desktop webviews are let through by the Rust permission handler and
  *  use this same standard API; failure text is platform-correct (C). */
+/** #62 (iOS/Android): the official geolocation plugin route — the
+ *  phone's own location services, with the system permission prompt.
+ *  The fix is validated like every other remote value (finite, in
+ *  range) before it is applied, and a failure lands on the same
+ *  approximate-area fallback as the other platforms. */
+async function locateNativeMobile(): Promise<void> {
+  const ios = shellOs === "ios";
+  try {
+    const geo = await import("@tauri-apps/plugin-geolocation");
+    let perm = await geo.checkPermissions();
+    if (perm.location !== "granted") {
+      perm = await geo.requestPermissions(["location"]);
+    }
+    if (perm.location !== "granted") {
+      setSearchStatus(
+        ios
+          ? "Location is off for Zero Light. Turn it on in Settings → Privacy & Security → Location Services — or use a place name, ZIP code, coordinates, or the map."
+          : "Location isn't available to Zero Light. Check that Location is on in Settings → Location — or use a place name, ZIP code, coordinates, or the map.",
+      );
+      void offerApproxArea();
+      return;
+    }
+    const pos = await geo.getCurrentPosition({
+      enableHighAccuracy: false,
+      timeout: 20000,
+      maximumAge: 300000,
+    });
+    const lat = pos.coords.latitude;
+    const lon = pos.coords.longitude;
+    if (
+      !Number.isFinite(lat) || !Number.isFinite(lon) ||
+      lat < -90 || lat > 90 || lon < -180 || lon > 180
+    ) {
+      throw new Error("bad fix");
+    }
+    const near = await reverseLabel(lat, lon);
+    applyPlace({
+      lat,
+      lon,
+      label: near ?? `Near me (±${Math.round(pos.coords.accuracy)} m)`,
+    });
+  } catch {
+    setSearchStatus(
+      "This device couldn't determine a location. Check that Location is on and Wi-Fi is connected — or use a place name, ZIP code, coordinates, or the map.",
+    );
+    void offerApproxArea();
+  }
+}
+
 function locateMe(): void {
   hidePickList();
   hideApproxCard();
   setSearchStatus("Locating…");
   if (shellOs === "macos") {
     void locateNativeMac();
+    return;
+  }
+  if (shellOs === "ios" || shellOs === "android") {
+    void locateNativeMobile();
     return;
   }
   if (!("geolocation" in navigator)) {
@@ -1775,10 +1829,151 @@ function renderPrint(mode: PrintMode): void {
   root.innerHTML = `${body}<p class="pfooter">${esc(PRINT_FOOTER)}</p>`;
 }
 
+/** #62 (decision D1): the print sheet as plain text lines for the
+ *  PDF builder — the same content renderPrint() puts on the HTML
+ *  sheet (same header facts, day blocks, slot lines, footer), built
+ *  from the same plan data so the two can be compared line by line. */
+function printSlotText(s: DayPlan["slots"][number], compact = false): string[] {
+  const range = compact ? fmtRange(s.start, s.end) : `${fmtTime(s.start)} – ${fmtTime(s.end)}`;
+  const head = s.bestToday ? `· Best today — ${range}` : `${s.labelSymbol} ${s.label} — ${range}`;
+  return [head, s.reason];
+}
+
+function buildPrintModel(mode: PrintMode): PrintModel | null {
+  const target = currentTarget();
+  if (!state.place || !target) return null;
+  const now = new Date();
+  const printed =
+    `Printed ${now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}` +
+    ` · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  const start = startKey();
+  const sections: PrintSection[] = [];
+  let viewLine = "";
+  if (mode === "day") {
+    const key = addDaysKey(start, state.dayOffset);
+    const plan = planForKey(key);
+    viewLine = `Day view — ${fmtDay(key)}`;
+    const rows: [string, string][] = [
+      ["Sunrise / Sunset", `${fmtTime(plan.astro.sunrise)} / ${fmtTime(plan.astro.sunset)}`],
+    ];
+    const hours = state.weather?.days.get(key) ?? [];
+    if (hours.length) {
+      const figs = printDayFigs(key);
+      rows.push(["High / Low", `${figs.hi} / ${figs.lo}`]);
+      rows.push(["Wind", figs.wind]);
+      rows.push(["Rain chance", figs.rain]);
+      const trend = pressureTrendPer6h(hours);
+      const inHg = (hours[hours.length - 1].pressureHpa * 0.02953).toFixed(2);
+      const word =
+        trend <= -1.5 ? "falling" : trend < -0.3 ? "falling slowly" : trend <= 0.3 ? "steady" : trend <= 1.5 ? "rising slowly" : "rising";
+      rows.push(["Pressure", `${inHg} inHg (${word})`]);
+    }
+    if (state.usgs?.waterTempF !== undefined && key === start && target.kind !== "hunting") {
+      rows.push([
+        "Water temperature",
+        `${Math.round(state.usgs.waterTempF)}°F — USGS gauge “${state.usgs.stationName}”`,
+      ]);
+    }
+    const tides = tidesForDay(state.tides, parseDateKey(key));
+    if (tides?.events.length) {
+      rows.push([
+        "Tides",
+        tides.events.map((e) => `${e.type} ${fmtTime(e.time)} (${e.heightFt.toFixed(1)} ft)`).join("; ") +
+          (state.tideStationName ? ` — NOAA station ${state.tideStationId} (${state.tideStationName})` : ""),
+      ]);
+    }
+    const head: string[] = [`Day rating: ${bandWord(plan)}`];
+    if (plan.heldBackBy && !plan.veto) head.push(`Day held back by: ${plan.heldBackBy}.`);
+    if (plan.veto) head.push(`Don't go — ${plan.veto}`);
+    if (plan.typical) head.push("Typical-day estimate — no forecast exists for this date yet.");
+    for (const [k, v] of rows) head.push(`${k}: ${v}`);
+    sections.push({ lines: head });
+    sections.push({
+      heading: "Best windows",
+      lines: plan.slots.length
+        ? plan.slots.flatMap((s) => printSlotText(s))
+        : ["No window rated Okay or better."],
+    });
+  } else if (mode === "week") {
+    const keys = Array.from({ length: 7 }, (_, i) => addDaysKey(start, i));
+    viewLine = `Week view — ${fmtDay(keys[0])} – ${fmtDay(keys[6])}`;
+    sections.push({
+      heading: "Week summary",
+      lines: keys.map((key) => {
+        const plan = planForKey(key);
+        const figs = printDayFigs(key);
+        const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+        return `${fmtDay(key)} — ${bandWord(plan)} — Best window ${best} — High/Low ${figs.hi} / ${figs.lo}`;
+      }),
+    });
+    const detail: string[] = [];
+    keys.forEach((key, i) => {
+      if (i) detail.push("");
+      const plan = planForKey(key);
+      const figs = printDayFigs(key);
+      const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+      detail.push(`${fmtDay(key)} — ${bandWord(plan)}`);
+      detail.push(
+        `Best window ${best} · High ${figs.hi} · Low ${figs.lo} · Wind ${figs.wind} · Rain chance ${figs.rain}` +
+          (plan.typical ? " · Typical-day estimate" : ""),
+      );
+      if (plan.heldBackBy && !plan.veto) detail.push(`Day held back by: ${plan.heldBackBy}.`);
+      if (plan.veto) detail.push(`Don't go — ${plan.veto}`);
+      else if (plan.slots.length) detail.push(...plan.slots.flatMap((s) => printSlotText(s)));
+      else detail.push("No window rated Okay or better.");
+    });
+    sections.push({ heading: "Day details", lines: detail });
+  } else {
+    const keys = Array.from({ length: 30 }, (_, i) => addDaysKey(start, i));
+    viewLine = `Month view — ${fmtDay(keys[0])} – ${fmtDay(keys[29])}`;
+    const lines: string[] = [];
+    keys.forEach((key, i) => {
+      if (i) lines.push("");
+      const plan = planForKey(key);
+      const figs = printDayFigs(key);
+      lines.push(
+        `${fmtDay(key)} — ${bandWord(plan)} · High ${figs.hi} · Low ${figs.lo} · Wind ${figs.wind} · Rain chance ${figs.rain}` +
+          (plan.typical ? " (typical-day estimate)" : ""),
+      );
+      if (plan.heldBackBy && !plan.veto) lines.push(`Day held back by: ${plan.heldBackBy}.`);
+      if (plan.veto) lines.push(`Don't go — ${plan.veto}`);
+      else if (plan.slots.length) lines.push(...plan.slots.flatMap((s) => printSlotText(s, true)));
+      else lines.push("No window rated Okay or better.");
+    });
+    sections.push({ lines });
+  }
+  return {
+    meta: [`${locationShortName()} · Target: ${target.name}`, viewLine, printed],
+    sections,
+    footer: PRINT_FOOTER,
+  };
+}
+
+/** #62 (decision D1): on the phone apps, Print builds the PDF and
+ *  hands it to the share sheet (AirPrint, print services, Files). */
+async function sharePrintPdf(mode: PrintMode): Promise<void> {
+  try {
+    const model = buildPrintModel(mode);
+    if (!model) return;
+    const bytes = buildPrintPdf(model);
+    const { shareFileBytes } = await import("./share");
+    await shareFileBytes(`zero-light-print-${mode}.pdf`, bytes, "application/pdf");
+  } catch {
+    /* PDF/share failure: nothing more the page can do */
+  }
+}
+
 function doPrint(mode: PrintMode): void {
   // #39: no guidance message — the Print button is disabled in this
   // state, and the browser-print path simply does nothing.
   if (!state.place || !currentTarget()) return;
+  // #62 (decision D1): phone webviews have no working print route —
+  // the same failure window.print() has in the macOS app (#48) — so
+  // mobile builds a PDF of the sheet and shares it instead.
+  if (shellOs === "ios" || shellOs === "android") {
+    void sharePrintPdf(mode);
+    return;
+  }
   renderPrint(mode);
   // #48: WKWebView silently drops window.print() — macOS prints through
   // the native print_page command; every other shell keeps window.print().
@@ -2156,7 +2351,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.9";
+  let versionLabel = "Zero Light 0.5.0";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.
