@@ -1,4 +1,8 @@
 // Data layer — the only place that fetches primary forecast/tide data.
+// In plain words: if the app needs the weather forecast or the tide
+// table, it asks this file. Everything comes back grouped by the
+// location's own calendar days, in the location's timezone, ready for
+// the scoring engine.
 //   Weather: Open-Meteo forecast API (no key, CORS-open). NOTE: the free
 //     tier is non-commercial — development use only (see README). When a
 //     Layer 2 cache endpoint is configured in Settings, weather requests

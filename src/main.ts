@@ -1,3 +1,35 @@
+// =====================================================================
+// Zero Light — main.ts: the application's conductor.
+//
+// In plain words: this file is the whole user interface and the
+// traffic controller for the data. It draws every screen (Planner,
+// Trends, day detail, print sheets), owns the single `state` object
+// below, and decides when data is fetched and when plans are computed.
+//
+// How a user request flows through the app:
+//   1. The user picks a place (search box, map, or "Use my location")
+//      and a target species.
+//   2. ensureData() loads the forecast plus the secondary sources
+//      (tides, USGS gauge, red tide, climate normals) for that place —
+//      each source independently, every one allowed to fail quietly.
+//   3. planForKey() turns one day's inputs into a DayPlan by calling
+//      the pure scoring engine (scoring.ts); plans are cached per
+//      day/target/data-set in state.plansCache.
+//   4. render() redraws the current view from state. Rendering is
+//      string-based: functions like renderPlanner() build HTML and
+//      assign it, then "wire" functions attach the click handlers.
+//
+// The other modules do the specialised work: data.ts fetches weather
+// and tides, extras.ts the secondary sources, cache.ts the on-device
+// cache, config.ts the on-device settings, calendar.ts the calendar
+// exports, badges.ts the watch-badge images. The Rust side
+// (src-tauri) only bridges what a web page cannot do itself — native
+// printing, native location on macOS, and the Save As dialog.
+//
+// Security rule (Wade, 2026-11-12): all user input is treated as
+// untrusted — validated, length-capped, escaped on output (see esc()),
+// and persisted values are re-validated when read back (config.ts).
+// =====================================================================
 import { invoke } from "@tauri-apps/api/core";
 import "./styles.css";
 import * as L from "leaflet";
@@ -1855,8 +1887,17 @@ function closePrintMenu(): void {
  *  never change the app's dimensions or summon scroll bars. */
 function placeMenu(btn: HTMLElement, menu: HTMLElement): void {
   const r = btn.getBoundingClientRect();
-  menu.style.top = `${r.bottom + 6}px`;
   menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+  // #59: flip the menu above its anchor when opening downward would
+  // run it off the bottom of the viewport (badge links low in the day
+  // panel/modal) — an off-screen menu reads as a dead link, and any
+  // scroll to reach it triggers the close-on-scroll rule.
+  const menuH = menu.offsetHeight || 0;
+  if (menuH && r.bottom + 6 + menuH > window.innerHeight - 8 && r.top - 6 - menuH >= 8) {
+    menu.style.top = `${r.top - 6 - menuH}px`;
+  } else {
+    menu.style.top = `${r.bottom + 6}px`;
+  }
 }
 
 /** #25: the Settings theme chips mirror the saved preference when the
@@ -2115,7 +2156,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.4.8";
+  let versionLabel = "Zero Light 0.4.9";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.

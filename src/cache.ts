@@ -1,5 +1,8 @@
 // Layer 1 of the caching design (next-build item #15): a local-first
-// device cache. Interactions read the local copy; the network is queried
+// device cache. In plain words: the app's own notebook — answers it has
+// already fetched are kept on the device with an expiry time, so
+// reopening the app is instant and offline use still shows the last
+// known data (labelled stale). Interactions read the local copy; the network is queried
 // only when the local copy is missing or past its TTL. If the network
 // fails, the local copy is served even past TTL and the caller is told
 // the data is stale so the UI can show a "last updated" note. An

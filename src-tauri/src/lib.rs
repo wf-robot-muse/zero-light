@@ -3,6 +3,15 @@
 // and shell info, native printing on macOS (#48), and native geolocation
 // on macOS (#47). The dialog/fs plugins (#49) give .ics exports a native
 // Save As in the desktop apps.
+//
+// In plain words: this is the app's thin native shell. It exists so the
+// same web interface can run inside a desktop window and still reach
+// the handful of operating-system abilities a web page is not allowed
+// to touch. What the shell may do is deliberately narrow: the exact
+// permissions are listed in src-tauri/capabilities/default.json (show
+// a save dialog, write a file the user picked — nothing else), and
+// the frontend learns which OS it is running on from shell_info() and
+// branches its behaviour accordingly.
 
 #[tauri::command]
 fn app_info() -> String {

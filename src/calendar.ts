@@ -1,4 +1,8 @@
 // Calendar export (next-build item #12).
+// In plain words: this file turns planned time slots into calendar
+// events — a downloadable .ics file (Apple Calendar and most others),
+// or one-tap "add" links for Google and Outlook. It also owns the one
+// save route every file the app produces uses, badges included.
 //
 // Decisions (locked 2026-11-11): export is offered from the planner, the
 // trends view, and the day-detail modal. One event per slot. The .ics

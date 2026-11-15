@@ -431,6 +431,28 @@ function handleGeo(request) {
 }
 
 // ------------------------------------------------------------- router
+//
+// How one request flows through this Worker, in plain words:
+//   1. The app asks this Worker (never the upstream service directly)
+//      for one kind of data about one place.
+//   2. The place is rounded to a 0.1° grid cell — about 11 km — and the
+//      cache key is built from the data type + cell, so every user
+//      near the same town shares one stored answer and the exact
+//      coordinates are never written down.
+//   3. If a fresh-enough copy of that answer is in D1 (the cache
+//      cupboard), it is returned immediately; no upstream call, no
+//      quota spent. That is "cache-aside": the cache is checked first
+//      and filled only on a miss.
+//   4. On a miss, the Worker fetches the upstream service itself —
+//      using the API key it keeps as a secret — checks the reply has
+//      the expected shape, stores it with an expiry time (the TTL),
+//      and returns it.
+//   5. If the upstream fetch fails but an expired copy exists, the
+//      expired copy may be served anyway ("stale") within a grace
+//      window, so a provider outage degrades the app instead of
+//      breaking it.
+//   6. Once an hour, the scheduled() sweeper deletes long-expired
+//      rows, because D1 has no automatic expiry of its own.
 
 export default {
   async fetch(request, env, ctx) {

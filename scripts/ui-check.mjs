@@ -1066,6 +1066,51 @@ try {
     await assertRowFits("#trends .export-row", "trends export row under font stress");
     await assertOneLine("#day-panel .modal-actions > button", "day panel actions under font stress");
     await assertRowFits("#day-panel .modal-actions", "day panel actions under font stress");
+
+    // v0.4.9 — #59: badge controls inside the Trends day detail were
+    // dead. Two causes: the badge menu (z-index 40) opened UNDER the
+    // day modal (backdrop z-index 50), and placeMenu always opened
+    // downward, running off the viewport bottom for low anchors.
+    // Undo the font stress, then exercise the modal form for real:
+    // Playwright's click actionability fails if the menu is covered.
+    await p.addStyleTag({ content: "html { font-size: 16px !important; }" });
+    await p.setViewportSize({ width: 390, height: 844 });
+    await p.click("#trends .day-block >> nth=1");
+    await p.waitForSelector("#day-modal .badge-this-day", { state: "visible", timeout: 8000 });
+    const modalDay = await badgeDownload(() => p.click("#day-modal .badge-this-day"), "apple");
+    check(
+      "#59 day-modal day badge downloads an 832x992 PNG",
+      /zero-light-badge-day-apple-.*\.png$/.test(modalDay.name) && modalDay.w === 832 && modalDay.h === 992,
+    );
+    const modalSlot = await badgeDownload(() => p.click("#day-modal .slot-badge >> nth=0"), "android");
+    check(
+      "#59 day-modal slot badge downloads a 960x960 PNG",
+      /zero-light-badge-slot-android-.*\.png$/.test(modalSlot.name) && modalSlot.w === 960 && modalSlot.h === 960,
+    );
+    await p.click("#day-modal .modal-close");
+    // Flip: in a short desktop window, a slot badge low in the day
+    // panel must open its menu INSIDE the viewport (above the link).
+    await p.setViewportSize({ width: 1440, height: 520 });
+    await p.click("#trends .day-block >> nth=2");
+    await p.waitForSelector("#day-panel .badge-this-day", { state: "visible", timeout: 8000 });
+    const panelSlots = await p.locator("#day-panel .slot-badge").count();
+    check("#59 panel has slot badge links for the flip test", panelSlots >= 2);
+    await p.click(`#day-panel .slot-badge >> nth=${panelSlots - 1}`);
+    await p.waitForSelector("#badge-menu:not([hidden])", { timeout: 8000 });
+    const menuBox = await p.evaluate(() => {
+      const r = document.querySelector("#badge-menu").getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, ih: window.innerHeight };
+    });
+    check(
+      "#59 badge menu opens inside the viewport for a low anchor",
+      menuBox.top >= 0 && menuBox.bottom <= menuBox.ih,
+    );
+    await p.keyboard.press("Escape");
+    const flipSlot = await badgeDownload(() => p.click(`#day-panel .slot-badge >> nth=${panelSlots - 1}`), "apple");
+    check(
+      "#59 low panel slot badge downloads an 832x992 PNG",
+      /zero-light-badge-slot-apple-.*\.png$/.test(flipSlot.name) && flipSlot.w === 832 && flipSlot.h === 992,
+    );
     await ctx.close();
   }
 } catch (err) {

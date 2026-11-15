@@ -1,4 +1,9 @@
 // Secondary data sources (next-build items #1, #2, #3, #4, #7, #10).
+// In plain words: the supporting evidence — a real water-temperature
+// gauge reading, a red-tide warning, the long-term normal temperature
+// for the date, the tide-station list, place-name lookups, and the
+// deer rut calendar. Each one improves the plan if it answers; none of
+// them is allowed to break it.
 // Every function here is best-effort: any failure returns undefined and
 // the app falls back to its v1 behaviour. Nothing here may throw.
 

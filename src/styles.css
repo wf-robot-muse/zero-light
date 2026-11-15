@@ -2,7 +2,19 @@
    v0.4.1: CSS-variable theme system (#25 — light/dark palettes, hero and
    rating colors identical in both), C2 Band Hero reskin (#28) with
    em-based responsive tiers (37.5em / 52.5em / 75em), the print
-   stylesheet (#26) at the bottom, and the full header lockup (#30). */
+   stylesheet (#26) at the bottom, and the full header lockup (#30).
+
+   In plain words: this file is the app's appearance rulebook. Colours
+   are named once as CSS variables (page, card, border, and the five
+   rating-band colours) so Light and Dark themes are just two palettes
+   over one layout. Layout is mobile-first and steps up at three
+   widths measured in em (so the steps follow the user's font size):
+   phones stack in one column, tablets widen, and at 75em the Planner
+   gains a side rail and Trends moves its day panel beside the strip.
+   The hero's colour IS the day's rating — the band colours here are
+   the same hex values the watch badges use (badges.ts). The @media
+   print section at the end restyles everything for paper and is the
+   only part of the app a printer ever sees. */
 
 :root {
   font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -231,6 +243,11 @@ button:hover { border-color: var(--accent); }
 /* #56: the badge pop-out's rows carry a brand glyph drawn in
    currentColor, so the icons flip with the theme like the logo. */
 .badge-menu { min-width: 170px; }
+/* #59: the badge menu must render above the day modal (backdrop
+   z-index 50, tooltip 60) — badge controls inside the modal open it,
+   and at the shared .info-menu z-index of 40 it sat under the modal
+   and its rows could not be clicked. */
+#badge-menu { z-index: 70; }
 .badge-menu button { display: flex; align-items: center; gap: 10px; }
 .badge-menu svg { flex: none; }
 

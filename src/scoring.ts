@@ -15,6 +15,15 @@
 //     slot (no double-counting), and it can never create a slot.
 //   - Solar / Kp contributes 0 and is not an input at all.
 //   - Labels: >=75 Best, 60-74 Good, 45-59 Okay, <45 not shown.
+//
+// In plain words: every hour of a day gets a score from three parts —
+// how good the day itself is (season, temperature, weather fronts),
+// how strong the hour's "anchor" is (first/last light, or moving tide
+// water in saltwater), and small adjustments (wind, rain, cloud).
+// Consecutive good hours are merged into the day's recommended time
+// slots, and the best hour sets the day's verdict. Days beyond the
+// real forecast are scored from astronomy and season alone and are
+// labelled "typical" — estimates, never presented as forecasts.
 
 import * as SunCalc from "suncalc";
 

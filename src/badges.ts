@@ -5,6 +5,20 @@
 // never updates itself, and a new slot or day means a new badge.
 // Rendering is Canvas 2D with text drawn as text — user-derived strings
 // (the location name) are fillText only, never parsed markup.
+//
+// In plain words: this file is a small poster printer. It takes a
+// finished day plan and paints a picture of it at exactly the pixel
+// size of a watch screen (drawn at 2x for sharpness). Two geometry
+// rules shape every badge: the top of the Apple canvas stays empty
+// because the watch draws its own clock there, and on Android only
+// the circle inscribed in the square is ever visible, so all content
+// lives in a central column. The ghost animal image behind the text
+// is the same stencil art as the app's hero, drawn with the "screen"
+// blend so it lightens the band colour instead of covering it; since
+// #57 it is always drawn at its natural proportions. Saving goes
+// through the same route as the calendar files (calendar.ts): a
+// native Save As dialog in the desktop apps, a browser download on
+// the web.
 import type { DayPlan, Slot } from "./scoring";
 import { detectShellOs } from "./calendar";
 
@@ -97,14 +111,41 @@ function slotHex(slot: Slot): string {
   return BAND_HEX[slot.label.toLowerCase()] ?? BAND_HEX.good;
 }
 
+// #59: the stencil is loaded through a blob URL, never the raw asset
+// URL. In the desktop apps the asset URL uses the app's own scheme,
+// and WebKit treats images from non-http(s) schemes as foreign for
+// canvas purposes: drawing one makes the canvas unreadable, so the
+// PNG export (toBlob) fails and no Save dialog ever appears. Proven
+// on macOS by elimination — the week badge, which draws no stencil,
+// saved fine in the app while day/slot badges did not, and the shared
+// save route was proven good by .ics export. A blob URL inherits the
+// page's origin, so the canvas stays exportable on every platform.
+// Loaded images are cached per URL for the session (the object URLs
+// are deliberately not revoked — a cached image must stay drawable;
+// there are at most 11 stencils).
+const imageCache = new Map<string, Promise<HTMLImageElement | null>>();
+
 function loadImage(src: string): Promise<HTMLImageElement | null> {
   if (!src) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-    img.src = src;
-  });
+  const hit = imageCache.get(src);
+  if (hit) return hit;
+  const p = (async (): Promise<HTMLImageElement | null> => {
+    let url = src;
+    try {
+      const res = await fetch(src);
+      if (res.ok) url = URL.createObjectURL(await res.blob());
+    } catch {
+      /* fetch unavailable — fall back to the direct URL */
+    }
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  })();
+  imageCache.set(src, p);
+  return p;
 }
 
 interface Geo {

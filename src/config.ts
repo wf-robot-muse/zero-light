@@ -1,5 +1,8 @@
 // User settings + persisted location — stored only in this device's
 // localStorage.
+// In plain words: the app's memory of your choices — the two calendar
+// export toggles, the theme, the last target you picked, the map style,
+// and the last location — kept on this device only, never uploaded.
 //
 // v0.3.0 (items #17/#20): API keys and the cache endpoint are NOT user
 // settings anymore. The USGS / NCEI / Geoapify keys live server-side as
