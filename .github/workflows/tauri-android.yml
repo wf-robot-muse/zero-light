@@ -37,8 +37,13 @@ jobs:
         with:
           packages: "platform-tools"
 
-      - name: Install SDK platform 35 and build-tools
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      # The platform version must match compileSdk in
+      # gen/android/app/build.gradle.kts (37). The Tauri libraries
+      # require compileSdk >= 36 (their AAR metadata enforces it);
+      # an earlier pin to platform 35 failed the build on exactly
+      # that check.
+      - name: Install SDK platform 37 and build-tools
+        run: sdkmanager "platforms;android-37" "build-tools;36.0.0" "build-tools;35.0.0"
 
       - name: Set up NDK r27c
         uses: nttld/setup-ndk@v1

@@ -27,15 +27,19 @@ val keystoreProperties = Properties().apply {
 val hasKeystore = keystoreProperties.getProperty("storeFile") != null
 
 android {
-    // Item #62: pinned to 35 (from the template's 37) so local and CI builds
-    // resolve the same widely-available platform; minSdk governs device support.
-    compileSdk = 35
+    // Item #62: compileSdk/targetSdk follow the generated template
+    // (37). An earlier pin to 35 failed in CI: the current Tauri
+    // Android library and the dialog/fs/geolocation plugins declare
+    // minCompileSdk 36 in their AAR metadata, so the app must compile
+    // against at least 36; the workflow installs the matching
+    // platform. minSdk governs device support.
+    compileSdk = 37
     namespace = "com.wf.robot.muse.zerolight"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.wf.robot.muse.zerolight"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
