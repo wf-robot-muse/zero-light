@@ -80,10 +80,16 @@ jobs:
             echo "No keystore secrets set; the release APK will be unsigned."
           fi
 
+      # ANDROID_HOME is deliberately NOT set here: setup-android
+      # exports it for later steps, and runs #2/#3 failed because this
+      # step overrode it with the NDK action's (empty) sdk-path
+      # output. Only NDK_HOME needs pinning, from the NDK step.
       - name: Build Android release APK
-        run: npx tauri android build --apk
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "NDK_HOME=$NDK_HOME"
+          npx tauri android build --apk
         env:
-          ANDROID_HOME: ${{ steps.setup-ndk.outputs.sdk-path }}
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
       - name: Upload APK artifact
