@@ -28,8 +28,14 @@ jobs:
         with:
           node-version: 22
 
+      # packages is pinned because the action's default list includes
+      # the old "tools" package, which Google no longer publishes —
+      # the first #62 run failed in this step on exactly that. The
+      # platform and build-tools are installed explicitly below.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
 
       - name: Install SDK platform 35 and build-tools
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"

@@ -38,16 +38,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build the frontend (the Xcode build phase embeds dist/)
-        run: npm run build
-
-      - name: Compile for iOS (signing off)
-        run: |
-          xcodebuild build \
-            -project src-tauri/gen/apple/zero-light.xcodeproj \
-            -scheme zero-light_iOS \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+      # The build must go through the Tauri CLI, not raw xcodebuild:
+      # the generated project's Rust build phase calls
+      # `tauri ios xcode-script`, which reads a CLI options file that
+      # only exists while the CLI itself is driving the build (the
+      # first #62 run failed on exactly that). --no-sign (CLI 2.11+)
+      # produces an unsigned archive purely as a compile+link check;
+      # the CLI also runs the frontend build itself.
+      - name: Compile for iOS (unsigned)
+        run: npx tauri ios build --no-sign --target aarch64
