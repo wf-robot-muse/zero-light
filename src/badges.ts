@@ -54,6 +54,21 @@ const STENCIL_BY_TARGET: Record<string, string> = {
   snapper: "snapper",
   snook: "snook",
   "speckled-trout": "trout",
+  // #63 additions — the stencil file carries the target's own id.
+  alligator: "alligator",
+  "black-drum": "black-drum",
+  catfish: "catfish",
+  crappie: "crappie",
+  dove: "dove",
+  "feral-hogs": "feral-hogs",
+  "king-mackerel": "king-mackerel",
+  pheasant: "pheasant",
+  quail: "quail",
+  "rainbow-trout": "rainbow-trout",
+  squirrel: "squirrel",
+  "striped-bass": "striped-bass",
+  tarpon: "tarpon",
+  walleye: "walleye",
 };
 const stencilModules = import.meta.glob("./assets/stencils/stencil-*.webp", {
   eager: true,

@@ -180,21 +180,52 @@
 
     <!-- Settings modal (item #12; keys/endpoint removed in v0.3.0, item #20; theme added in #25) -->
     <div id="settings-modal" class="modal-backdrop" hidden>
-      <div class="modal-card" role="dialog" aria-label="Settings">
+      <div class="modal-card settings-card" role="dialog" aria-label="Settings">
         <div class="modal-head">
           <h2>Settings</h2>
           <button type="button" class="icon-btn modal-close" data-close="settings-modal" title="Close" aria-label="Close">✕</button>
         </div>
-        <h3>Theme</h3>
-        <div class="row" id="theme-picker" role="radiogroup" aria-label="Theme">
-          <button type="button" data-theme-pref="device" class="chip">Follow device</button>
-          <button type="button" data-theme-pref="light" class="chip">Light</button>
-          <button type="button" data-theme-pref="dark" class="chip">Dark</button>
+        <!-- #63: Settings is an accordion — one section open at a time,
+             each closed row shows a summary. The card is capped at the
+             screen height; an open section's body scrolls inside it,
+             and the Save bar stays pinned at the bottom. -->
+        <div class="settings-sections">
+          <section class="acc-section" data-acc="theme">
+            <button type="button" class="acc-head" data-acc-head="theme" aria-expanded="false">
+              <span>Theme</span><span class="acc-sum" id="acc-sum-theme">Follow device</span>
+            </button>
+            <div class="acc-body" data-acc-body="theme" hidden>
+              <div class="row" id="theme-picker" role="radiogroup" aria-label="Theme">
+                <button type="button" data-theme-pref="device" class="chip">Follow device</button>
+                <button type="button" data-theme-pref="light" class="chip">Light</button>
+                <button type="button" data-theme-pref="dark" class="chip">Dark</button>
+              </div>
+            </div>
+          </section>
+          <section class="acc-section" data-acc="calendar">
+            <button type="button" class="acc-head" data-acc-head="calendar" aria-expanded="false">
+              <span>Calendar export</span><span class="acc-sum">2 options</span>
+            </button>
+            <div class="acc-body" data-acc-body="calendar" hidden>
+              <label class="check"><input id="export-typical" type="checkbox" /> Include typical days (beyond the forecast)</label>
+              <label class="check"><input id="export-dontgo" type="checkbox" /> Include Don’t-go days (one all-day event each)</label>
+            </div>
+          </section>
+          <section class="acc-section" data-acc="targets">
+            <button type="button" class="acc-head" data-acc-head="targets" aria-expanded="false">
+              <span>Targets</span><span class="acc-sum" id="acc-sum-targets"></span>
+            </button>
+            <div class="acc-body" data-acc-body="targets" hidden>
+              <input id="target-filter" type="text" placeholder="Filter targets…" aria-label="Filter targets" maxlength="40" autocomplete="off" />
+              <div id="target-groups"></div>
+              <div class="target-count">
+                <span id="target-count-text"></span>
+                <button id="targets-reset" class="small-btn" type="button">Reset to defaults</button>
+              </div>
+            </div>
+          </section>
         </div>
-        <h3>Calendar export</h3>
-        <label class="check"><input id="export-typical" type="checkbox" /> Include typical days (beyond the forecast)</label>
-        <label class="check"><input id="export-dontgo" type="checkbox" /> Include Don’t-go days (one all-day event each)</label>
-        <div class="row modal-actions">
+        <div class="settings-foot">
           <button id="save-settings" type="button">Save settings</button>
         </div>
       </div>

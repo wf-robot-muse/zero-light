@@ -163,5 +163,41 @@ const typicalPlan = S.generateDayPlan({
 check("typical day is flagged typical", typicalPlan.typical === true);
 check("typical day dayQuality within 0-50", typicalPlan.dayQuality >= 0 && typicalPlan.dayQuality <= 50);
 
+// --- #63: the 25-target catalog ---------------------------------------------
+check("catalog has 25 targets (#63)", S.TARGETS.length === 25, `${S.TARGETS.length}`);
+check(
+  "catalog ids are unique (#63)",
+  new Set(S.TARGETS.map((t) => t.id)).size === S.TARGETS.length,
+);
+let allPlan = true;
+for (const t of S.TARGETS) {
+  const p = S.generateDayPlan({
+    date: new Date(2026, 5, 15),
+    lat: 33.2,
+    lon: -87.5,
+    target: t,
+    hours: hoursFor(new Date(2026, 5, 15), { temp: 68, wind: 6 }),
+  });
+  if (!(p.dayScore >= 0 && p.dayScore <= 100 && p.slots.length <= 4)) allPlan = false;
+}
+check("every catalog target produces a sane plan (#63)", allPlan);
+
+// Nocturnal anchor: on a prime June night a catfish plan's best slot is
+// a night slot (the engine's night anchor is 21:00-02:00).
+const catDay = new Date(2026, 5, 15); // Jun 15 — catfish peak, prime temps
+const catPlan = S.generateDayPlan({
+  date: catDay,
+  lat: 33.2,
+  lon: -87.5,
+  target: S.targetById("catfish"),
+  hours: hoursFor(catDay, { temp: 78, wind: 5 }),
+});
+const catBest = catPlan.slots.reduce((a, s) => (a && a.score >= s.score ? a : s), null);
+check(
+  "catfish best slot is at night (#63 nocturnal)",
+  !!catBest && (catBest.start.getHours() >= 20 || catBest.start.getHours() <= 2),
+  catBest ? `best @${catBest.start.getHours()}:00 score ${catBest.score}` : "no slots",
+);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL SMOKE CHECKS PASSED");
 process.exit(failures ? 1 : 0);

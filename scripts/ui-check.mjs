@@ -276,16 +276,17 @@ try {
   );
   check("first run shows the one-line empty state (#27)", true);
 
-  // #24: target list = disabled placeholder + alphabetical 11.
+  // #24 + #63: target list = disabled placeholder + the enabled set;
+  // on a first run that is the default 10 of the 25-target catalog.
   const optionTexts = await page.locator("#target option").allTextContents();
-  check("target select has placeholder + 11 targets", optionTexts.length === 12);
+  check("target select has placeholder + default 10 targets (#63)", optionTexts.length === 11);
   check("first option is the placeholder", optionTexts[0] === "Choose a target…");
   check(
-    "targets are the alphabetical 11 (no Catfish/Crappie)",
+    "first-run targets are the default 10, alphabetical (#63)",
     JSON.stringify(optionTexts.slice(1)) ===
       JSON.stringify([
-        "Cobia", "Flounder", "Grouper", "Largemouth Bass", "Redfish",
-        "Snapper", "Snook", "Speckled Trout", "Turkey", "Waterfowl", "Whitetail Deer",
+        "Catfish", "Flounder", "Grouper", "Largemouth Bass", "Redfish",
+        "Snapper", "Speckled Trout", "Turkey", "Waterfowl", "Whitetail Deer",
       ]),
   );
   check("no target chosen on first run", (await page.inputValue("#target")) === "");
@@ -544,6 +545,7 @@ try {
   check("settings has no cache endpoint field", (await page.locator("#cache-endpoint").count()) === 0);
   check("settings keeps export toggles", (await page.locator("#export-typical").count()) === 1);
   check("settings has the three theme chips (#25)", (await page.locator("#theme-picker .chip").count()) === 3);
+  await page.click('[data-acc-head="theme"]');
   await page.click('#theme-picker .chip[data-theme-pref="dark"]');
   await page.click("#save-settings");
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark", null, { timeout: 5000 });
@@ -567,6 +569,7 @@ try {
   );
   await page.click("#settings-btn");
   await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+  await page.click('[data-acc-head="theme"]');
   await page.click('#theme-picker .chip[data-theme-pref="device"]');
   await page.click("#save-settings");
   await page.waitForFunction(() => document.documentElement.dataset.theme === "light", null, { timeout: 5000 });
@@ -584,6 +587,67 @@ try {
       );
     }),
   );
+
+  // #63: Settings target picker — accordion structure, default set,
+  // filter, save-through to the dropdown, placeholder fallback when
+  // the selected target is disabled, the min-one guardrail, and Reset.
+  await page.click("#settings-btn");
+  await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+  check("settings has three accordion sections (#63)", (await page.locator(".acc-head").count()) === 3);
+  check("targets summary shows the default count (#63)", (await page.textContent("#acc-sum-targets")) === "10 of 25 shown");
+  await page.click('[data-acc-head="targets"]');
+  check("targets section lists all 25 targets (#63)", (await page.locator("#target-groups input[data-target-id]").count()) === 25);
+  check("10 targets checked by default (#63)", (await page.locator("#target-groups input[data-target-id]:checked").count()) === 10);
+  check("count line reads 10 of 25 (#63)", ((await page.textContent("#target-count-text")) ?? "").startsWith("10 of 25 shown"));
+  await page.fill("#target-filter", "tarpon");
+  check(
+    "filter shows only Tarpon (#63)",
+    await page.evaluate(() => {
+      const vis = [...document.querySelectorAll("#target-groups .check")].filter((l) => !l.hidden);
+      return vis.length === 1 && (vis[0].textContent ?? "").includes("Tarpon");
+    }),
+  );
+  await page.fill("#target-filter", "");
+  await page.check('#target-groups input[data-target-id="tarpon"]');
+  await page.click("#save-settings");
+  check("dropdown gains Tarpon after save (#63)", (await page.locator("#target option").count()) === 12);
+  check(
+    "enabled targets persist (#63)",
+    await page.evaluate(() => (localStorage.getItem("zl_enabled_targets") ?? "").includes("tarpon")),
+  );
+  await page.click("#settings-btn");
+  await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+  await page.click('[data-acc-head="targets"]');
+  await page.uncheck('#target-groups input[data-target-id="redfish"]');
+  await page.click("#save-settings");
+  check(
+    "disabling the selected target falls back to the placeholder (#63)",
+    (await page.inputValue("#target")) === "",
+  );
+  await page.click("#settings-btn");
+  await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+  await page.click('[data-acc-head="targets"]');
+  await page.click("#targets-reset");
+  check("Reset restores the default 10 (#63)", (await page.locator("#target-groups input[data-target-id]:checked").count()) === 10);
+  await page.evaluate(() => {
+    const boxes = [...document.querySelectorAll("#target-groups input[data-target-id]:checked")];
+    boxes.slice(1).forEach((b) => {
+      b.checked = false;
+      b.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  });
+  check("unchecking down to one leaves one (#63)", (await page.locator("#target-groups input[data-target-id]:checked").count()) === 1);
+  await page.evaluate(() => {
+    const last = document.querySelector("#target-groups input[data-target-id]:checked");
+    if (last) {
+      last.checked = false;
+      last.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+  check("the last target cannot be unchecked (#63)", (await page.locator("#target-groups input[data-target-id]:checked").count()) === 1);
+  await page.click("#targets-reset");
+  await page.click("#save-settings");
+  check("dropdown restored to placeholder + default 10 (#63)", (await page.locator("#target option").count()) === 11);
 
   // ⓘ menu (#18): How ratings work + About & credits.
   await page.click("#info-btn");

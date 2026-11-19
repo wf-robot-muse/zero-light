@@ -49,24 +49,57 @@ export interface TargetDef {
   rainSensitivity: number;
 }
 
-// #24: alphabetical 11. Catfish and Crappie removed; Largemouth Bass is the
-// only freshwater target. The four added saltwater species (Cobia, Flounder,
-// Grouper, Snapper) use web-checked season/temperature parameters and inherit
-// tide scoring + the red-tide veto from the saltwater path.
+// #24: the original alphabetical 11 (Catfish and Crappie were removed
+// there; Largemouth Bass was the only freshwater target). #63 expands the
+// catalog to 25 — the additions below carry web-checked season/temperature
+// parameters on the same basis as the #24 set, and Catfish and Crappie
+// return as catalog options. Three additions are nocturnal (Catfish,
+// Feral Hogs, Alligator): the engine's night anchor (21:00-02:00) drives
+// their slots. Walleye is deliberately NOT flagged nocturnal — it is a
+// dawn/dusk low-light feeder, and the night-only anchor would erase its
+// prime dusk window.
 export const TARGETS: TargetDef[] = [
+  // Hunting — alligator (permit/tag hunts; activity peaks in the warm
+  // late-summer nights of the season window)
+  { id: "alligator", name: "Alligator", kind: "hunting", peakMonths: [7, 8], shoulderMonths: [6, 9], primeMinF: 75, primeMaxF: 95, lightAnchor: 36, nocturnal: true, rainSensitivity: 0.4 },
   // Saltwater (FWC/USFWS temperature bands; v1 uses air temp as a water proxy)
+  { id: "black-drum", name: "Black Drum", kind: "saltwater", peakMonths: [1, 2, 3, 8, 9, 10], shoulderMonths: [0, 4, 11], primeMinF: 60, primeMaxF: 75, lightAnchor: 34, rainSensitivity: 0.5 },
+  // Freshwater — catfish (night feeder; rain-tolerant, feeds in rising water)
+  { id: "catfish", name: "Catfish", kind: "freshwater", peakMonths: [3, 4, 5, 6, 7, 8], shoulderMonths: [2, 9], primeMinF: 70, primeMaxF: 85, lightAnchor: 36, nocturnal: true, rainSensitivity: 0.4 },
   { id: "cobia", name: "Cobia", kind: "saltwater", peakMonths: [3, 4, 5], shoulderMonths: [2, 9], primeMinF: 70, primeMaxF: 84, lightAnchor: 34, rainSensitivity: 0.5 },
+  // Freshwater — crappie (spring spawn + fall schooling)
+  { id: "crappie", name: "Crappie", kind: "freshwater", peakMonths: [1, 2, 3, 9, 10], shoulderMonths: [0, 4, 8, 11], primeMinF: 58, primeMaxF: 72, lightAnchor: 34, rainSensitivity: 0.6 },
+  // Hunting — dove (early-fall fields + December season; rain grounds flights)
+  { id: "dove", name: "Dove", kind: "hunting", peakMonths: [8, 9, 11], shoulderMonths: [7, 0], primeMinF: 45, primeMaxF: 75, lightAnchor: 36, rainSensitivity: 0.8 },
+  // Hunting — feral hogs (night feeder, cool months)
+  { id: "feral-hogs", name: "Feral Hogs", kind: "hunting", peakMonths: [9, 10, 11, 0, 1, 2], shoulderMonths: [3, 8], primeMinF: 30, primeMaxF: 70, lightAnchor: 36, nocturnal: true, rainSensitivity: 0.5 },
   { id: "flounder", name: "Flounder", kind: "saltwater", peakMonths: [9, 10], shoulderMonths: [8, 2, 3, 4], primeMinF: 62, primeMaxF: 78, lightAnchor: 34, rainSensitivity: 0.5 },
   { id: "grouper", name: "Grouper", kind: "saltwater", peakMonths: [9, 10], shoulderMonths: [2, 3, 8], primeMinF: 66, primeMaxF: 80, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "king-mackerel", name: "King Mackerel", kind: "saltwater", peakMonths: [4, 5, 6, 7, 8, 9], shoulderMonths: [3, 10], primeMinF: 68, primeMaxF: 85, lightAnchor: 34, rainSensitivity: 0.5 },
   // Freshwater (FWC/USFWS table: bass spawn 62-75)
   { id: "largemouth-bass", name: "Largemouth Bass", kind: "freshwater", peakMonths: [2, 3, 4, 9, 10], shoulderMonths: [1, 5, 8, 11], primeMinF: 62, primeMaxF: 78, lightAnchor: 34, rainSensitivity: 0.6 },
+  // Hunting — pheasant (cold-weather upland bird)
+  { id: "pheasant", name: "Pheasant", kind: "hunting", peakMonths: [9, 10, 11, 0], shoulderMonths: [8, 1], primeMinF: 20, primeMaxF: 50, lightAnchor: 34, rainSensitivity: 0.7 },
+  // Hunting — quail (northern bobwhite; late-fall/winter coveys)
+  { id: "quail", name: "Quail", kind: "hunting", peakMonths: [10, 11, 0, 1], shoulderMonths: [9, 2], primeMinF: 35, primeMaxF: 65, lightAnchor: 34, rainSensitivity: 0.8 },
+  // Freshwater — rainbow trout (cold water; fall-through-spring)
+  { id: "rainbow-trout", name: "Rainbow Trout", kind: "freshwater", peakMonths: [9, 10, 11, 0, 1, 2], shoulderMonths: [3, 8], primeMinF: 45, primeMaxF: 58, lightAnchor: 34, rainSensitivity: 0.5 },
   { id: "redfish", name: "Redfish", kind: "saltwater", peakMonths: [8, 9, 10, 3, 4], shoulderMonths: [1, 2, 5, 7, 11], primeMinF: 65, primeMaxF: 82, lightAnchor: 34, rainSensitivity: 0.5 },
   { id: "snapper", name: "Snapper", kind: "saltwater", peakMonths: [5, 6], shoulderMonths: [4, 7], primeMinF: 70, primeMaxF: 86, lightAnchor: 34, rainSensitivity: 0.5 },
   { id: "snook", name: "Snook", kind: "saltwater", peakMonths: [3, 4, 5, 6, 7, 8, 9], shoulderMonths: [2, 10], primeMinF: 72, primeMaxF: 86, lightAnchor: 34, rainSensitivity: 0.5 },
   { id: "speckled-trout", name: "Speckled Trout", kind: "saltwater", peakMonths: [3, 4, 9, 10], shoulderMonths: [1, 2, 5, 8, 11], primeMinF: 65, primeMaxF: 80, lightAnchor: 36, rainSensitivity: 0.5 },
+  // Hunting — squirrel (fall mast season; sits out rain and high wind)
+  { id: "squirrel", name: "Squirrel", kind: "hunting", peakMonths: [9, 10, 11, 0], shoulderMonths: [8, 1], primeMinF: 35, primeMaxF: 65, lightAnchor: 34, rainSensitivity: 0.9 },
+  // Freshwater — striped bass (landlocked/river fish; spring + fall runs,
+  // a strong low-light feeder)
+  { id: "striped-bass", name: "Striped Bass", kind: "freshwater", peakMonths: [3, 4, 9, 10], shoulderMonths: [2, 5, 8, 11], primeMinF: 55, primeMaxF: 70, lightAnchor: 36, rainSensitivity: 0.5 },
+  // Saltwater — tarpon (the warm-water migration; verified 75-85 prime)
+  { id: "tarpon", name: "Tarpon", kind: "saltwater", peakMonths: [4, 5, 6], shoulderMonths: [3, 7], primeMinF: 75, primeMaxF: 85, lightAnchor: 34, rainSensitivity: 0.5 },
   // Hunting (season windows are generic v1 approximations — see README)
   { id: "turkey", name: "Turkey", kind: "hunting", peakMonths: [2, 3, 4], shoulderMonths: [1, 5], primeMinF: 45, primeMaxF: 70, lightAnchor: 36, rainSensitivity: 1.0 },
   { id: "waterfowl", name: "Waterfowl", kind: "hunting", peakMonths: [11, 0, 10], shoulderMonths: [9], primeMinF: 25, primeMaxF: 50, lightAnchor: 36, rainSensitivity: 0.4 },
+  // Freshwater — walleye (low-light specialist; spring spawn + fall feed)
+  { id: "walleye", name: "Walleye", kind: "freshwater", peakMonths: [2, 3, 8, 9, 10], shoulderMonths: [1, 4, 11], primeMinF: 48, primeMaxF: 65, lightAnchor: 38, rainSensitivity: 0.5 },
   { id: "whitetail", name: "Whitetail Deer", kind: "hunting", peakMonths: [10, 11, 0], shoulderMonths: [9], primeMinF: 32, primeMaxF: 58, lightAnchor: 38, rainSensitivity: 0.8 },
 ];
 

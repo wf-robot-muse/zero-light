@@ -537,6 +537,29 @@ button:hover { border-color: var(--accent); }
 .check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 0.95em; cursor: pointer; }
 #theme-picker { flex-wrap: wrap; }
 
+/* #63: the Settings card is an accordion. The card is capped at the
+   screen height and laid out as a column — head, sections, Save bar —
+   so the Save bar is always on screen (Wade's requirement). Only one
+   section is open at a time; the open section takes the leftover
+   height and its body scrolls inside the card, so a long section
+   (the 25-target picker) never pushes the card past the screen. */
+.settings-card { display: flex; flex-direction: column; max-height: calc(100dvh - 56px); }
+.settings-sections { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.acc-section { flex: none; display: flex; flex-direction: column; min-height: 0; }
+.acc-section + .acc-section { border-top: 1px solid var(--border); }
+.acc-section.open { flex: 1 1 auto; }
+.acc-head { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 11px 14px; background: var(--card); color: var(--text); border: none; border-radius: 0; box-shadow: none; font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.acc-sum { font-weight: 400; color: var(--muted); font-size: 0.9em; }
+.acc-body { overflow-y: auto; min-height: 0; padding: 4px 14px 14px; }
+.acc-body[hidden] { display: none; }
+#target-filter { width: 100%; border: 1px solid var(--border); border-radius: 999px; padding: 0.5em 1em; font: inherit; font-size: 0.95em; margin-top: 8px; background: var(--card); color: var(--text); }
+.target-group { font-size: 0.78em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 12px 0 2px; }
+.target-list { columns: 2; column-gap: 22px; }
+.target-list .check { margin-top: 7px; break-inside: avoid; }
+.target-count { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 0.88em; color: var(--muted); }
+.settings-foot { flex: none; border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; display: flex; justify-content: flex-end; }
+.settings-foot > button { white-space: nowrap; }
+
 .tooltip {
   position: absolute; z-index: 60; max-width: 240px;
   background: #17202a; color: #eef3f0; border-radius: 8px;

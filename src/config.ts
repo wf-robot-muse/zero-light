@@ -1,8 +1,9 @@
 // User settings + persisted location — stored only in this device's
 // localStorage.
 // In plain words: the app's memory of your choices — the two calendar
-// export toggles, the theme, the last target you picked, the map style,
-// and the last location — kept on this device only, never uploaded.
+// export toggles, the theme, which targets show in the dropdown (#63),
+// the last target you picked, the map style, and the last location —
+// kept on this device only, never uploaded.
 //
 // v0.3.0 (items #17/#20): API keys and the cache endpoint are NOT user
 // settings anymore. The USGS / NCEI / Geoapify keys live server-side as
@@ -14,11 +15,31 @@
  *  falls back to direct/keyless sources. */
 export const CACHE_ENDPOINT = "https://zero-light-cache.wf-robot-muse.workers.dev";
 
+import { TARGETS } from "./scoring";
+
 const KEYS = {
   includeTypical: "zl_export_typical",
   includeDontGo: "zl_export_dontgo",
   theme: "zl_theme",
+  targets: "zl_enabled_targets",
 } as const;
+
+/** Item #63: the targets shown in the dropdown on a fresh install (and
+ *  the "Reset to defaults" set) — 10 of the 25-target catalog, chosen by
+ *  Wade 2026-11-19. Stored per user once they save Settings; the full
+ *  catalog always stays available in the Settings target picker. */
+export const DEFAULT_TARGET_IDS: readonly string[] = [
+  "catfish",
+  "flounder",
+  "grouper",
+  "largemouth-bass",
+  "redfish",
+  "snapper",
+  "speckled-trout",
+  "turkey",
+  "waterfowl",
+  "whitetail",
+];
 
 /** Theme preference (#25). "device" = Follow device (default). The persisted
  *  value is re-validated on load against exactly these three values
@@ -33,6 +54,9 @@ export interface AppSettings {
   includeDontGo: boolean;
   /** Theme (#25): Follow device / Light / Dark. */
   theme: ThemePref;
+  /** Item #63: ids of the targets shown in the target dropdown, in
+   *  catalog order. Always at least one; validated on load. */
+  targets: string[];
 }
 
 function get(k: string): string {
@@ -52,6 +76,30 @@ function set(k: string, v: string): void {
   }
 }
 
+/** Item #63: the persisted enabled-target list is untrusted input —
+ *  re-validate on load (input-security rule, Wade 2026-11-12): it must
+ *  be a JSON array of strings, only ids that exist in the current
+ *  catalog survive, duplicates are dropped, and a missing/empty/garbled
+ *  value falls back to the default subset. The result is returned in
+ *  catalog order so the dropdown order is stable. */
+function loadEnabledTargets(): string[] {
+  const known = new Set(TARGETS.map((t) => t.id));
+  let picked = new Set<string>();
+  try {
+    const raw = get(KEYS.targets);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed)) {
+      for (const v of parsed.slice(0, 100)) {
+        if (typeof v === "string" && known.has(v)) picked.add(v);
+      }
+    }
+  } catch {
+    picked = new Set();
+  }
+  if (picked.size === 0) picked = new Set(DEFAULT_TARGET_IDS);
+  return TARGETS.filter((t) => picked.has(t.id)).map((t) => t.id);
+}
+
 export function loadSettings(): AppSettings {
   const rawTheme = get(KEYS.theme);
   return {
@@ -60,6 +108,7 @@ export function loadSettings(): AppSettings {
     theme: (THEME_PREFS as readonly string[]).includes(rawTheme)
       ? (rawTheme as ThemePref)
       : "device",
+    targets: loadEnabledTargets(),
   };
 }
 
@@ -67,6 +116,7 @@ export function saveSettings(s: AppSettings): void {
   set(KEYS.includeTypical, s.includeTypical ? "1" : "");
   set(KEYS.includeDontGo, s.includeDontGo ? "1" : "");
   set(KEYS.theme, s.theme);
+  set(KEYS.targets, JSON.stringify(s.targets));
 }
 
 // ------------------------------------------------------- last target (#24)

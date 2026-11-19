@@ -41,6 +41,7 @@ import {
   pressureTrendPer6h,
   type DayPlan,
   type TargetDef,
+  type TargetKind,
   type Tides,
 } from "./scoring";
 import {
@@ -62,6 +63,7 @@ import {
   loadBaseMapId,
   saveBaseMapId,
   CACHE_ENDPOINT,
+  DEFAULT_TARGET_IDS,
   type AppSettings,
   type ThemePref,
   type BaseMapId,
@@ -86,6 +88,21 @@ const STENCIL_BY_TARGET: Record<string, string> = {
   snapper: "snapper",
   snook: "snook",
   "speckled-trout": "trout",
+  // #63 additions — the stencil file carries the target's own id.
+  alligator: "alligator",
+  "black-drum": "black-drum",
+  catfish: "catfish",
+  crappie: "crappie",
+  dove: "dove",
+  "feral-hogs": "feral-hogs",
+  "king-mackerel": "king-mackerel",
+  pheasant: "pheasant",
+  quail: "quail",
+  "rainbow-trout": "rainbow-trout",
+  squirrel: "squirrel",
+  "striped-bass": "striped-bass",
+  tarpon: "tarpon",
+  walleye: "walleye",
 };
 const stencilModules = import.meta.glob("./assets/stencils/stencil-*.webp", {
   eager: true,
@@ -2000,19 +2017,25 @@ function rebuildTargets(): void {
   // kind restrictions went away with the presets, item #17).
   // #24: a disabled "Choose a target…" placeholder leads the list; an
   // unset or no-longer-valid id falls back to it (never to TARGETS[0]).
+  // #63: only the user's enabled targets are offered — the enabled list
+  // lives in Settings (state.settings.targets, validated in config.ts).
+  // A selected target that is no longer enabled falls back to the
+  // placeholder, exactly like an unknown id.
   const sel = $<HTMLSelectElement>("#target");
   const placeholder = document.createElement("option");
   placeholder.value = "";
   placeholder.textContent = "Choose a target…";
   placeholder.disabled = true;
   sel.replaceChildren(placeholder);
+  const enabled = new Set(state.settings.targets);
   for (const t of TARGETS) {
+    if (!enabled.has(t.id)) continue;
     const o = document.createElement("option");
     o.value = t.id;
     o.textContent = t.name;
     sel.append(o);
   }
-  if (state.targetId && !TARGETS.some((t) => t.id === state.targetId)) state.targetId = null;
+  if (state.targetId && !enabled.has(state.targetId)) state.targetId = null;
   sel.value = state.targetId ?? "";
 }
 
@@ -2099,11 +2122,119 @@ function placeMenu(btn: HTMLElement, menu: HTMLElement): void {
  *  modal opens; chip clicks stage a pending value that Save persists. */
 let pendingTheme: ThemePref = "device";
 
+const THEME_LABELS: Record<ThemePref, string> = {
+  device: "Follow device",
+  light: "Light",
+  dark: "Dark",
+};
+
 function syncThemeChips(): void {
   pendingTheme = state.settings.theme;
   document.querySelectorAll<HTMLElement>("#theme-picker .chip").forEach((c) =>
     c.classList.toggle("selected", c.dataset.themePref === pendingTheme),
   );
+  $("#acc-sum-theme").textContent = THEME_LABELS[pendingTheme];
+}
+
+// ------------------------------------------------------ targets (#63)
+// The Settings Targets section: one checkbox per catalog target,
+// grouped Saltwater / Freshwater / Hunting, with a filter box. Like
+// the theme chips, checkbox changes stage a pending set that Save
+// persists; Save then rebuilds the dropdown from the enabled set.
+// Guardrail: at least one target always stays on — unchecking the
+// last checked target is refused in place.
+
+let pendingTargets = new Set<string>();
+
+const TARGET_KIND_LABELS: [TargetKind, string][] = [
+  ["saltwater", "Saltwater"],
+  ["freshwater", "Freshwater"],
+  ["hunting", "Hunting"],
+];
+
+function buildTargetPicker(): void {
+  const host = $("#target-groups");
+  host.replaceChildren();
+  for (const [kind, label] of TARGET_KIND_LABELS) {
+    const head = document.createElement("div");
+    head.className = "target-group";
+    head.textContent = label;
+    head.dataset.groupHead = kind;
+    const list = document.createElement("div");
+    list.className = "target-list";
+    list.dataset.groupList = kind;
+    for (const t of TARGETS.filter((x) => x.kind === kind)) {
+      const lab = document.createElement("label");
+      lab.className = "check";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.targetId = t.id;
+      input.addEventListener("change", () => {
+        if (input.checked) {
+          pendingTargets.add(t.id);
+        } else if (pendingTargets.size <= 1) {
+          input.checked = true; // the last target stays on
+          return;
+        } else {
+          pendingTargets.delete(t.id);
+        }
+        updateTargetCount();
+      });
+      lab.append(input, document.createTextNode(` ${t.name}`));
+      list.append(lab);
+    }
+    host.append(head, list);
+  }
+}
+
+function updateTargetCount(): void {
+  const n = pendingTargets.size;
+  $("#target-count-text").textContent =
+    `${n} of ${TARGETS.length} shown in the dropdown. At least one target stays on.`;
+  $("#acc-sum-targets").textContent = `${n} of ${TARGETS.length} shown`;
+}
+
+function applyTargetFilter(raw: string): void {
+  const q = raw.trim().toLowerCase().slice(0, 40);
+  for (const [kind] of TARGET_KIND_LABELS) {
+    let visible = 0;
+    document
+      .querySelectorAll<HTMLElement>(`#target-groups [data-group-list="${kind}"] .check`)
+      .forEach((lab) => {
+        const show = !q || (lab.textContent ?? "").toLowerCase().includes(q);
+        lab.hidden = !show;
+        if (show) visible++;
+      });
+    const head = document.querySelector<HTMLElement>(`#target-groups [data-group-head="${kind}"]`);
+    const list = document.querySelector<HTMLElement>(`#target-groups [data-group-list="${kind}"]`);
+    if (head) head.hidden = visible === 0;
+    if (list) list.hidden = visible === 0;
+  }
+}
+
+function syncTargetChecks(): void {
+  pendingTargets = new Set(state.settings.targets);
+  document
+    .querySelectorAll<HTMLInputElement>("#target-groups input[data-target-id]")
+    .forEach((input) => {
+      input.checked = pendingTargets.has(input.dataset.targetId ?? "");
+    });
+  $<HTMLInputElement>("#target-filter").value = "";
+  applyTargetFilter("");
+  updateTargetCount();
+}
+
+/** #63 accordion: one section open at a time; clicking the open
+ *  section's header closes it. */
+function setAccSection(name: string | null): void {
+  document.querySelectorAll<HTMLElement>(".acc-section").forEach((sec) => {
+    const open = sec.dataset.acc === name;
+    sec.classList.toggle("open", open);
+    const body = sec.querySelector<HTMLElement>(".acc-body");
+    if (body) body.hidden = !open;
+    const head = sec.querySelector<HTMLElement>(".acc-head");
+    if (head) head.setAttribute("aria-expanded", open ? "true" : "false");
+  });
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -2203,6 +2334,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   // printer icon opens the #26 print menu the same way.
   $("#settings-btn").addEventListener("click", () => {
     syncThemeChips();
+    syncTargetChecks();
+    setAccSection(null); // #63: Settings always opens at the resting state
     openModal("settings-modal");
   });
   $("#info-btn").addEventListener("click", (e) => {
@@ -2335,23 +2468,59 @@ window.addEventListener("DOMContentLoaded", async () => {
       document.querySelectorAll<HTMLElement>("#theme-picker .chip").forEach((x) =>
         x.classList.toggle("selected", x.dataset.themePref === pendingTheme),
       );
+      $("#acc-sum-theme").textContent = THEME_LABELS[pendingTheme];
     }),
   );
+
+  // #63: accordion headers, the target filter, and Reset to defaults.
+  buildTargetPicker();
+  syncTargetChecks();
+  document.querySelectorAll<HTMLElement>(".acc-head").forEach((h) =>
+    h.addEventListener("click", () => {
+      const sec = h.closest<HTMLElement>(".acc-section");
+      const name = sec?.dataset.acc ?? null;
+      setAccSection(sec?.classList.contains("open") ? null : name);
+    }),
+  );
+  $<HTMLInputElement>("#target-filter").addEventListener("input", (e) => {
+    applyTargetFilter((e.target as HTMLInputElement).value);
+  });
+  $("#targets-reset").addEventListener("click", () => {
+    pendingTargets = new Set(DEFAULT_TARGET_IDS);
+    document
+      .querySelectorAll<HTMLInputElement>("#target-groups input[data-target-id]")
+      .forEach((input) => {
+        input.checked = pendingTargets.has(input.dataset.targetId ?? "");
+      });
+    updateTargetCount();
+  });
+
   $("#save-settings").addEventListener("click", () => {
     state.settings = {
       includeTypical: $<HTMLInputElement>("#export-typical").checked,
       includeDontGo: $<HTMLInputElement>("#export-dontgo").checked,
       theme: pendingTheme,
+      // #63: persist the enabled targets in catalog order.
+      targets: TARGETS.filter((t) => pendingTargets.has(t.id)).map((t) => t.id),
     };
     saveSettings(state.settings);
     applyTheme();
+    // #63: the dropdown rebuilds from the new enabled set. If the
+    // selected target was just disabled, rebuildTargets falls back to
+    // the placeholder; only then do the views need a re-render.
+    const hadTarget = state.targetId;
+    rebuildTargets();
+    if (hadTarget && !state.targetId) {
+      state.plansCache.clear();
+      render();
+    }
     $("#settings-modal").hidden = true;
     // #34: no "settings saved" confirmation message (Wade, 2026-11-13).
   });
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.5.0";
+  let versionLabel = "Zero Light 0.6.0";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.
