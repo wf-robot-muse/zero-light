@@ -409,12 +409,36 @@ async function drawStencil(
   // (which sets a height and lets the width follow).
   const aspect = img.naturalWidth / img.naturalHeight;
   if (!aspect || !isFinite(aspect)) return;
-  const w = geo.w * 0.98;
-  const h = w / aspect;
+  let w = geo.w * 0.98;
+  let h = w / aspect;
+  // #65: cap the height at the canvas space below the draw top, so a
+  // tall stencil cannot run off the bottom of the badge — on Android
+  // badges the dove's tail tip and the quail's feet used to fall
+  // ~23–31px past the edge. When the cap bites, the width follows the
+  // aspect, and the usual anchor formula applies to the new width.
+  const maxH = geo.h - (geo.top - 30);
+  if (h > maxH) {
+    h = maxH;
+    w = h * aspect;
+  }
+  const drawX = geo.w - w * 0.82;
+  const drawY = geo.top - 30;
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.globalCompositeOperation = "screen";
-  ctx.drawImage(img, geo.w - w * 0.82, geo.top - 30, w, h);
+  // #65: the pheasant is the one right-facing stencil — its head is
+  // at the artwork's right edge, which is the end this draw lets
+  // bleed off the canvas, so its badge showed no head at all. Mirror
+  // its draw so the head lands on-canvas in the same place as every
+  // other target's. (An engraving ghost carries no text, so a
+  // mirrored pheasant reads exactly like the original.)
+  if (targetId === "pheasant") {
+    ctx.translate(drawX + w, drawY);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0, w, h);
+  } else {
+    ctx.drawImage(img, drawX, drawY, w, h);
+  }
   ctx.restore();
 }
 

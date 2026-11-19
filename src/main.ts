@@ -104,6 +104,18 @@ const STENCIL_BY_TARGET: Record<string, string> = {
   tarpon: "tarpon",
   walleye: "walleye",
 };
+// #65: the wide stencils (natural aspect at least 2.3). The stylesheet
+// sizes these down at the tablet tier so the fish sits inside the hero
+// with margin instead of spanning it edge to edge (see .hero-stencil
+// in styles.css). Keys are stencil file names, as in STENCIL_BY_TARGET.
+const WIDE_STENCILS = new Set([
+  "catfish",
+  "king-mackerel",
+  "rainbow-trout",
+  "striped-bass",
+  "tarpon",
+  "walleye",
+]);
 const stencilModules = import.meta.glob("./assets/stencils/stencil-*.webp", {
   eager: true,
   query: "?url",
@@ -445,6 +457,10 @@ const PROHIBIT_SVG = `<svg class="hero-prohibit" viewBox="0 0 100 100" aria-hidd
 function heroHtml(plan: DayPlan, key: string, target: TargetDef): string {
   const band = bandKey(plan);
   const stencil = plan.veto ? "" : stencilFor(target.id);
+  const stencilName = STENCIL_BY_TARGET[target.id] ?? "";
+  // #65: mark the wide stencils so the stylesheet can size them down
+  // at the tablet tier (see WIDE_STENCILS above).
+  const stencilWide = WIDE_STENCILS.has(stencilName) ? "1" : "0";
   const pill = plan.veto
     ? `<span class="hero-pill">⦻ ${esc(plan.veto)}</span>`
     : plan.slots.length
@@ -452,7 +468,7 @@ function heroHtml(plan: DayPlan, key: string, target: TargetDef): string {
       : `<span class="hero-pill">No window rated Okay or better</span>`;
   return `
   <section class="hero hero-${band}">
-    ${plan.veto ? PROHIBIT_SVG : stencil ? `<img class="hero-stencil" data-stencil="${esc(STENCIL_BY_TARGET[target.id] ?? "")}" src="${stencil}" alt="" aria-hidden="true" />` : ""}
+    ${plan.veto ? PROHIBIT_SVG : stencil ? `<img class="hero-stencil" data-stencil="${esc(stencilName)}" data-wide="${stencilWide}" src="${stencil}" alt="" aria-hidden="true" />` : ""}
     <div class="hero-main">
       <div class="hero-band">${esc(bandWord(plan))}</div>
       <div class="hero-when">${esc(fmtDay(key))} · ${esc(locationShortName())}</div>
@@ -2043,6 +2059,24 @@ function openModal(id: string): void {
   $(`#${id}`).hidden = false;
 }
 
+/* #64: while any modal is open, the page behind it must not scroll
+   (Wade saw double vertical scrollbars — the window's and the modal
+   backdrop's). Every modal is a .modal-backdrop whose visibility is
+   its `hidden` property, and that property is toggled from many
+   places (openModal, the day detail, the map, the close buttons,
+   backdrop clicks, Esc) — so instead of touching every toggle site,
+   the wiring at startup watches the backdrops' `hidden` attribute
+   and keeps a `modal-open` class on <body> in sync with whether any
+   modal is visible. styles.css turns the class into
+   `overflow: hidden` on the page, so all vertical scrolling happens
+   inside the modal itself. */
+function syncScrollLock(): void {
+  const anyOpen = [
+    ...document.querySelectorAll<HTMLElement>(".modal-backdrop"),
+  ].some((bd) => !bd.hidden);
+  document.body.classList.toggle("modal-open", anyOpen);
+}
+
 // ------------------------------------------------- About (item #18)
 // Disclaimer wording settled with Wade on 2026-11-12 (Option B + the
 // Option C safety sentence) — verbatim, do not paraphrase.
@@ -2430,6 +2464,15 @@ window.addEventListener("DOMContentLoaded", async () => {
       else bd.hidden = true;
     }),
   );
+  // #64: keep the page scroll lock in sync with modal visibility
+  // (see syncScrollLock above).
+  document.querySelectorAll<HTMLElement>(".modal-backdrop").forEach((bd) =>
+    new MutationObserver(syncScrollLock).observe(bd, {
+      attributes: true,
+      attributeFilter: ["hidden"],
+    }),
+  );
+  syncScrollLock();
 
   // Escape layering: info menu → map (modal Esc cancels everything,
   // decided 2026-11-12) → pick list.
@@ -2520,7 +2563,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.6.0";
+  let versionLabel = "Zero Light 0.6.1";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.

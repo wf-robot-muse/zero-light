@@ -649,6 +649,104 @@ try {
   await page.click("#save-settings");
   check("dropdown restored to placeholder + default 10 (#63)", (await page.locator("#target option").count()) === 11);
 
+  // #64: while a modal is open the page behind it must not scroll
+  // (body gets the modal-open class → overflow hidden), and the
+  // expanded Targets section must not overflow horizontally.
+  await page.click("#settings-btn");
+  await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+  check(
+    "page scroll is locked while Settings is open (#64)",
+    await page.evaluate(
+      () =>
+        document.body.classList.contains("modal-open") &&
+        getComputedStyle(document.body).overflow === "hidden",
+    ),
+  );
+  await page.click('[data-acc-head="targets"]');
+  check(
+    "expanded Targets section has no horizontal overflow (#64)",
+    await page.evaluate(() => {
+      const body = document.querySelector('[data-acc-body="targets"]');
+      const bd = document.querySelector("#settings-modal");
+      return (
+        !!body &&
+        body.scrollWidth <= body.clientWidth + 1 &&
+        !!bd &&
+        bd.scrollWidth <= bd.clientWidth + 1
+      );
+    }),
+  );
+  await page.click('[data-close="settings-modal"]');
+  await page.waitForFunction(
+    () => document.querySelector("#settings-modal")?.hidden === true,
+    null,
+    { timeout: 8000 },
+  );
+  check(
+    "page scroll unlocks when the modal closes (#64)",
+    await page.evaluate(() => !document.body.classList.contains("modal-open")),
+  );
+
+  // #65: hero stencils are head-first. At a phone-width viewport the
+  // fish stencil's head end (its left edge) sits inside the hero, and
+  // the pheasant's head end (its right edge) sits inside with margin.
+  {
+    const vp = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.click('#view-picker .chip[data-view="planner"]');
+    await page.selectOption("#target", "redfish");
+    await page.waitForSelector(".hero .hero-stencil", { timeout: 20000 });
+    const fish = await page.evaluate(() => {
+      const h = document.querySelector(".hero");
+      const img = h?.querySelector(".hero-stencil");
+      if (!h || !img) return null;
+      const hr = h.getBoundingClientRect();
+      const ir = img.getBoundingClientRect();
+      return { off: ir.left - hr.left, w: hr.width, hgt: ir.height };
+    });
+    check(
+      "fish hero stencil is head-first at phone width (#65)",
+      !!fish && fish.off > fish.w * 0.1 && fish.off < fish.w * 0.24 && fish.hgt === 200,
+    );
+    // Enable the pheasant, then check its right-anchored fit.
+    await page.click("#settings-btn");
+    await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+    await page.click('[data-acc-head="targets"]');
+    await page.check('#target-groups input[data-target-id="pheasant"]');
+    await page.click("#save-settings");
+    await page.selectOption("#target", "pheasant");
+    await page.waitForSelector(".hero .hero-stencil", { timeout: 20000 });
+    const phez = await page.evaluate(() => {
+      const h = document.querySelector(".hero");
+      const img = h?.querySelector(".hero-stencil");
+      if (!h || !img) return null;
+      const hr = h.getBoundingClientRect();
+      const ir = img.getBoundingClientRect();
+      return { rightGap: hr.right - ir.right, leftOff: ir.left - hr.left };
+    });
+    check(
+      "pheasant hero stencil keeps its head inside the right edge (#65)",
+      !!phez && phez.rightGap >= 4 && phez.rightGap <= 18 && phez.leftOff >= -1,
+    );
+    // Restore the pre-block state: disable the pheasant again and
+    // save — the app's own fallback returns the selection to the
+    // placeholder when the selected target is disabled (#63).
+    await page.click("#settings-btn");
+    await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+    await page.click('[data-acc-head="targets"]');
+    await page.uncheck('#target-groups input[data-target-id="pheasant"]');
+    await page.click("#save-settings");
+    // Selecting the pheasant above also overwrote the persisted
+    // last-used target; the flow's later persistence check expects
+    // the value it had before this block (redfish), so put it back.
+    await page.evaluate(() => localStorage.setItem("zl_last_target", "redfish"));
+    check(
+      "hero block restores the default 10 + placeholder (#65)",
+      (await page.locator("#target option").count()) === 11 && (await page.inputValue("#target")) === "",
+    );
+    if (vp) await page.setViewportSize(vp);
+  }
+
   // ⓘ menu (#18): How ratings work + About & credits.
   await page.click("#info-btn");
   await page.waitForSelector("#info-menu:not([hidden])", { timeout: 8000 });
@@ -1311,6 +1409,65 @@ try {
       "#59 low panel slot badge downloads an 832x992 PNG",
       /zero-light-badge-slot-apple-.*\.png$/.test(flipSlot.name) && flipSlot.w === 832 && flipSlot.h === 992,
     );
+
+    // #65: the pheasant is the one right-facing stencil; its badge
+    // draw is mirrored so the head lands on-canvas. Download a
+    // pheasant day badge and sample the strip where the mirrored
+    // head sits (logical x 90–260, y 124–165 of the 416×496 badge —
+    // above the text zone): it must hold stencil pixels, where the
+    // unmirrored draw left only the background color.
+    await p.evaluate(() => {
+      const cur = JSON.parse(localStorage.getItem("zl_enabled_targets") ?? "[]");
+      if (!cur.includes("pheasant")) {
+        cur.push("pheasant");
+        localStorage.setItem("zl_enabled_targets", JSON.stringify(cur));
+      }
+    });
+    await p.reload({ waitUntil: "load" });
+    await p.fill("#place-search", "27.9506, -82.4572");
+    await p.press("#place-search", "Enter");
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
+      null,
+      { timeout: 20000 },
+    );
+    await p.selectOption("#target", "pheasant");
+    await p.waitForSelector("#plan-side .hero", { timeout: 20000 });
+    await p.click("#badge-day");
+    await p.waitForSelector("#badge-menu:not([hidden])", { timeout: 8000 });
+    const phezDlPromise = p.waitForEvent("download", { timeout: 15000 });
+    await p.click("#badge-menu [data-badge-platform='apple']");
+    const phezDl = await phezDlPromise;
+    const phezPath = await phezDl.path();
+    const phezBuf = phezPath ? await readFile(phezPath) : Buffer.alloc(0);
+    const headPixels = await p.evaluate(async (b64) => {
+      const img = new Image();
+      await new Promise((res, rej) => {
+        img.onload = res;
+        img.onerror = rej;
+        img.src = "data:image/png;base64," + b64;
+      });
+      const cv = document.createElement("canvas");
+      cv.width = img.naturalWidth;
+      cv.height = img.naturalHeight;
+      const cx = cv.getContext("2d");
+      if (!cx) return -1;
+      cx.drawImage(img, 0, 0);
+      const bg = cx.getImageData(8, 8, 1, 1).data;
+      // @2x pixels: strip x 180–520, y 248–330 (logical 90–260, 124–165).
+      const data = cx.getImageData(180, 248, 340, 82).data;
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (
+          Math.abs(data[i] - bg[0]) >= 10 ||
+          Math.abs(data[i + 1] - bg[1]) >= 10 ||
+          Math.abs(data[i + 2] - bg[2]) >= 10
+        )
+          n++;
+      }
+      return n;
+    }, phezBuf.toString("base64"));
+    check("#65 pheasant badge shows its head (mirrored draw)", headPixels > 200);
     await ctx.close();
   }
 } catch (err) {

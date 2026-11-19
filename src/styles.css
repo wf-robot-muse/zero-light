@@ -369,9 +369,24 @@ button:hover { border-color: var(--accent); }
 .hero-fair { background: #bc8400; }
 .hero-poor { background: #607d8b; }
 .hero-dontgo { background: #b3261e; }
+/* #65: head-first placement (Wade, 2026-11-19). Every stencil's head
+   is at the artwork's left edge (the pheasant is the one exception —
+   see its rule below), so the stencil is pinned by its HEAD end, at
+   left 16%, and the tail is what bleeds off the hero's right edge.
+   The old rule pinned the tail end (right: -34px), which cut the head
+   off on any screen narrower than the artwork. Height only — the
+   width follows the artwork's own aspect, never distorted. */
 .hero-stencil {
-  position: absolute; right: -34px; top: -24px; height: 228px;
+  position: absolute; left: 16%; right: auto; top: -14px; bottom: auto; height: 200px;
   mix-blend-mode: screen; opacity: 0.3; pointer-events: none;
+}
+/* #65: the pheasant faces right — its head is at the artwork's right
+   edge — so its hero pins the head end on the right, with margin, at
+   a size that keeps the whole bird inside the hero (proven at 380,
+   320 and 280px hero widths in the #65 mockups). Because the head end
+   is the anchored end, a narrower hero can only ever take the tail. */
+.hero-stencil[data-stencil="pheasant"] {
+  left: auto; right: 10px; top: 12px; height: 158px;
 }
 /* The approved turkey art keeps faint color on the head; production
    desaturates it so the ghost reads as pure engraving. */
@@ -519,6 +534,20 @@ button:hover { border-color: var(--accent); }
   max-width: 620px; width: 100%; box-shadow: 0 10px 34px rgba(0, 0, 0, 0.3);
   text-align: left;
 }
+/* #64: while any modal is open the page behind it must not scroll —
+   Wade saw double vertical scrollbars (the window's and the modal
+   backdrop's). main.ts keeps this class on <body> in sync with modal
+   visibility; all vertical scrolling then happens inside the modal.
+   Border-box: .modal-card is width:100% PLUS padding, which under
+   the default content-box made the card wider than its container —
+   and inside Settings, the Targets filter (width:100% plus padding)
+   overflowed its section the same way, growing a horizontal
+   scrollbar in the expanded Targets section. width now means the
+   full box, padding included, for modal cards and everything in
+   the Settings card. */
+body.modal-open { overflow: hidden; }
+.modal-card { box-sizing: border-box; }
+.settings-card, .settings-card *, .settings-card *::before, .settings-card *::after { box-sizing: border-box; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
 .modal-head .icon-btn { font-size: 1.05em; line-height: 1; }
 /* #44: the day-detail action row now sits under the verdict (and the
@@ -601,6 +630,11 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
   .tile-k { font-size: 0.74em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
   .tile-v { font-size: 1.04em; font-weight: 700; margin-top: 3px; }
   .hero-band { font-size: 34px; }
+  /* #65: the widest stencils (data-wide — aspect at least 2.3: catfish,
+     king mackerel, rainbow trout, striped bass, tarpon, walleye) size
+     down at this tier so the fish sits inside the hero with margin
+     instead of spanning it edge to edge. */
+  .hero-stencil[data-wide="1"] { height: 160px; }
 }
 
 @media (min-width: 52.5em) {
@@ -612,7 +646,8 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
   .db-band { display: block; }
   .hero { padding: 22px; }
   .hero-band { font-size: 36px; }
-  .hero-stencil { height: 215px; right: -10px; top: auto; bottom: -26px; }
+  .hero-stencil { height: 215px; }
+  .hero-stencil[data-stencil="pheasant"] { height: 190px; right: 14px; top: 10px; }
 }
 
 @media (min-width: 75em) {
