@@ -594,6 +594,70 @@ body.modal-open { overflow: hidden; }
 .save-warn-card p { margin: 0; }
 .save-warn-close { position: absolute; top: 6px; right: 6px; }
 
+/* #68: the guided tour and the "more targets" nudge share one fixed
+   overlay layer (z-index 45: above the page and its menus, below the
+   modals at 50, so Settings can open over it from the nudge). The
+   ring is a white outline around the highlighted part; its huge
+   box-shadow is the dim — everything outside the ring darkens,
+   exactly the part inside stays lit. The card is the app's card
+   surface with a caret pointing at the ring; --caret-x is set from
+   the tour code to the anchor's center. */
+#tour-layer { position: fixed; inset: 0; z-index: 45; }
+#tour-ring {
+  position: fixed;
+  border: 2.5px solid #fff;
+  border-radius: 16px;
+  box-shadow: 0 0 0 9999px rgba(18, 24, 20, 0.55);
+  pointer-events: none;
+}
+#tour-card {
+  position: fixed;
+  box-sizing: border-box;
+  background: var(--card);
+  color: var(--text);
+  border-radius: 14px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+  padding: 18px;
+}
+#tour-card::before {
+  content: "";
+  position: absolute;
+  top: -9px;
+  left: var(--caret-x, 60px);
+  border: 10px solid transparent;
+  border-bottom-color: var(--card);
+  border-top: 0;
+}
+#tour-card.caret-below::before {
+  top: auto;
+  bottom: -9px;
+  border-bottom: 0;
+  border-top: 10px solid var(--card);
+}
+.tour-top { display: flex; justify-content: space-between; align-items: baseline; }
+.tour-eyebrow { font-size: 0.78em; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.tour-count { font-size: 0.82em; font-weight: 600; color: var(--muted); }
+#tour-title { font-size: 1.19em; margin: 5px 0 6px; }
+#tour-body { font-size: 0.94em; line-height: 1.5; margin: 0; }
+.tour-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; }
+.tour-nav { display: flex; align-items: center; gap: 6px; }
+.tour-plain {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 10px 6px;
+}
+.tour-plain:hover { border: none; color: var(--text); }
+.tour-primary {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: #fff;
+  font-weight: 600;
+  padding: 10px 22px;
+}
+
 .tooltip {
   position: absolute; z-index: 60; max-width: 240px;
   background: #17202a; color: #eef3f0; border-radius: 8px;

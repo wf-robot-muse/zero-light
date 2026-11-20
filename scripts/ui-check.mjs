@@ -151,6 +151,7 @@ try {
     // by widening the viewport past 75em (1200px).
     viewport: { width: 1000, height: 850 },
   });
+  await context.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); });
   const page = await context.newPage();
   page.on("pageerror", (e) => console.log("pageerror:", e.message));
 
@@ -944,6 +945,7 @@ try {
   // placeholders in every region, and on desktop the two placeholder
   // columns end on the same line.
   const ctx2 = await browser.newContext();
+  await ctx2.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); });
   const page2 = await ctx2.newPage();
   await page2.setViewportSize({ width: 1440, height: 1000 });
   await page2.goto("http://localhost:4173/", { waitUntil: "load" });
@@ -1030,6 +1032,7 @@ try {
   async function printRoute(os) {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
     await ctx.addInitScript((mockOs) => {
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
       window.__bridgeCalls = [];
       window.__winPrint = 0;
       window.print = () => {
@@ -1088,6 +1091,7 @@ try {
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
       window.__bridgeCalls = [];
       window.__shareCalls = [];
       window.__fsWrites = [];
@@ -1222,6 +1226,7 @@ try {
   // (Apple 416x496 @2x = 832x992; Android 480x480 @2x = 960x960).
   {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 950 }, acceptDownloads: true });
+    await ctx.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); });
     const p = await ctx.newPage();
     await mockRoutesFor(p);
     await p.goto("http://localhost:4173/", { waitUntil: "load" });
@@ -1485,6 +1490,7 @@ try {
     // and report the failure on a dismissible card there.
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
     await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
       const orig = Storage.prototype.setItem;
       Storage.prototype.setItem = function (k, v) {
         if (k === "zl_enabled_targets") return; // silently dropped
@@ -1529,6 +1535,7 @@ try {
   {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
     await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
       const now = Date.now();
       const entry = (t, exp) =>
         JSON.stringify({ t, exp, data: { seeded: true } });
@@ -1560,6 +1567,7 @@ try {
         "zl_cache_filler",
         JSON.stringify({ t: 1000, exp: Date.now() + 86400_000, data: { seeded: true } }),
       );
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
       const orig = Storage.prototype.setItem;
       Storage.prototype.setItem = function (k, v) {
         if (
@@ -1594,6 +1602,166 @@ try {
         !healed.stored.includes('"redfish"') &&
         healed.filler === null,
     );
+    await ctx.close();
+  }
+
+  // #68: the guided tour (7 stops, first open only, re-openable from
+  // the \u24d8 menu) and the "more targets" nudge (once, 3 s after the
+  // first-ever dropdown pick, Option B presentation). These contexts
+  // are deliberately NOT seeded with the seen flags.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
+    const t1 = await p.textContent("#tour-title");
+    const c1 = await p.textContent("#tour-count");
+    check("#68 tour auto-starts on first open at step 1 of 7", t1 === "Find your place" && c1 === "Step 1 of 7");
+    await p.click("#tour-next");
+    check("#68 Next advances to the target stop", (await p.textContent("#tour-title")) === "Pick a target");
+    await p.click("#tour-back");
+    check("#68 Back returns to step 1", (await p.textContent("#tour-title")) === "Find your place");
+    for (let i = 0; i < 5; i++) await p.click("#tour-next");
+    check("#68 stop 6 headline is the targets job", (await p.textContent("#tour-title")) === "Add or remove targets here");
+    await p.click("#tour-next");
+    const doneLabel = await p.textContent("#tour-next");
+    const skipVisible = await p.locator("#tour-left").isVisible();
+    check("#68 last stop offers Done and no Skip", doneLabel === "Done" && !skipVisible);
+    await p.click("#tour-next");
+    await p.waitForSelector("#tour-layer[hidden]", { state: "attached", timeout: 8000 });
+    check("#68 finishing the tour marks it seen", (await p.evaluate(() => localStorage.getItem("zl_tour_seen"))) === "1");
+    await p.reload({ waitUntil: "load" });
+    await p.waitForTimeout(700);
+    check("#68 the tour does not auto-start again", (await p.evaluate(() => document.querySelector("#tour-layer")?.hidden)) === true);
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1");
+    });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.click("#info-btn");
+    await p.waitForSelector("#info-menu:not([hidden])", { timeout: 8000 });
+    check("#68 the info menu leads with How to use Zero Light", (await p.textContent("#menu-tour")) === "How to use Zero Light");
+    // Menu items are clicked via evaluate: a real click scrolls first
+    // at phone size and the #35 close-on-scroll rule shuts the menu.
+    await p.evaluate(() => document.querySelector("#menu-tour").click());
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
+    check("#68 the menu row restarts the tour", (await p.textContent("#tour-title")) === "Find your place");
+    await p.click("#tour-left");
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
+    await p.click("#tour-left"); // skip the tour
+    await p.waitForSelector("#tour-layer[hidden]", { state: "attached", timeout: 8000 });
+    await p.fill("#place-search", "27.9506, -82.4572");
+    await p.press("#place-search", "Enter");
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
+      null,
+      { timeout: 20000 },
+    );
+    await p.selectOption("#target", "redfish");
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 9000 });
+    const nb = await p.textContent("#tour-body");
+    check(
+      "#68 the nudge fires after the first pick with the live counts",
+      (await p.textContent("#tour-title")) === "Want more targets?" && (nb ?? "").includes("10 of 25"),
+    );
+    await p.click("#tour-left"); // Not now
+    await p.waitForSelector("#tour-layer[hidden]", { state: "attached", timeout: 8000 });
+    check("#68 Not now marks the nudge seen", (await p.evaluate(() => localStorage.getItem("zl_nudge_seen"))) === "1");
+    await p.selectOption("#target", "snapper");
+    await p.waitForTimeout(3600);
+    check("#68 the nudge never fires twice", (await p.evaluate(() => document.querySelector("#tour-layer")?.hidden)) === true);
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
+    await p.click("#tour-left");
+    await p.waitForSelector("#tour-layer[hidden]", { state: "attached", timeout: 8000 });
+    await p.fill("#place-search", "27.9506, -82.4572");
+    await p.press("#place-search", "Enter");
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
+      null,
+      { timeout: 20000 },
+    );
+    await p.selectOption("#target", "redfish");
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 9000 });
+    await p.click("#tour-next"); // Open Settings
+    await p.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+    check(
+      "#68 the nudge's Open Settings lands on the Targets section, expanded",
+      (await p.evaluate(() => document.querySelector('[data-acc-body="targets"]')?.hidden)) === false,
+    );
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_enabled_targets", JSON.stringify(["redfish"]));
+    });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.fill("#place-search", "27.9506, -82.4572");
+    await p.press("#place-search", "Enter");
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
+      null,
+      { timeout: 20000 },
+    );
+    await p.selectOption("#target", "redfish");
+    await p.waitForTimeout(3600);
+    check("#68 no nudge when targets were already customized", (await p.evaluate(() => document.querySelector("#tour-layer")?.hidden)) === true);
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
+    await p.click("#tour-left"); // skip the auto-started tour
+    await p.waitForSelector("#tour-layer[hidden]", { state: "attached", timeout: 8000 });
+    await p.fill("#place-search", "27.9506, -82.4572");
+    await p.press("#place-search", "Enter");
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
+      null,
+      { timeout: 20000 },
+    );
+    await p.selectOption("#target", "redfish"); // arms the 3 s timer
+    // Restart the tour from the menu before the timer lands.
+    await p.evaluate(() => document.querySelector("#info-btn").click());
+    await p.evaluate(() => document.querySelector("#menu-tour").click());
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
+    await p.waitForTimeout(3400); // the timer fires during the tour
+    check("#68 the nudge waits while the tour is up", (await p.textContent("#tour-title")) === "Find your place");
+    await p.click("#tour-left"); // skip the tour — the nudge shows now
+    await p.waitForFunction(
+      () => document.querySelector("#tour-title")?.textContent === "Want more targets?",
+      null,
+      { timeout: 8000 },
+    );
+    check("#68 the nudge shows when the tour ends", true);
+    await p.click("#tour-left");
     await ctx.close();
   }
 } catch (err) {

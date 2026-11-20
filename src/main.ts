@@ -62,6 +62,10 @@ import {
   saveLastTargetId,
   loadBaseMapId,
   saveBaseMapId,
+  tourSeen,
+  markTourSeen,
+  nudgeSeen,
+  markNudgeSeen,
   CACHE_ENDPOINT,
   DEFAULT_TARGET_IDS,
   type AppSettings,
@@ -2112,7 +2116,8 @@ function aboutHtml(version: string): string {
   last location is remembered on this device for next time. Pick a target and
   a day to see that day's best windows in the Planner; Trends shows how the
   coming weeks rate. The printer icon in the header prints the day, week, or
-  month; the gear holds theme and calendar-export settings.</p>
+  month; the gear holds theme and calendar-export settings. The ⓘ menu's
+  "How to use Zero Light" row replays the guided tour any time.</p>
   <h3>Data &amp; services</h3>
   <ul class="credits">
     ${link("https://open-meteo.com/", "Open-Meteo", "weather forecasts")}
@@ -2158,6 +2163,229 @@ function placeMenu(btn: HTMLElement, menu: HTMLElement): void {
   } else {
     menu.style.top = `${r.bottom + 6}px`;
   }
+}
+
+/* ------------------------------------------------------- tour (#68)
+   Two one-time introductions share the #tour-layer overlay (index.html
+   + the #68 block in styles.css): a ring around a real part of the
+   app — its box-shadow dims everything else — plus a callout card.
+
+   Part 1, the guided tour: seven stops in the order a new user meets
+   the app (search box → target dropdown → day chips → Planner/Trends
+   → refresh+print → Settings gear → ⓘ). It starts once, on the first
+   open on a device; finishing or skipping marks it seen (config.ts).
+   The ⓘ menu's "How to use Zero Light" row restarts it any time.
+
+   Part 2, the "more targets" nudge: the same layer in a one-card
+   mode, ring on the Settings gear. It fires once, 3 seconds after
+   the first-ever dropdown pick — the moment the user learns the
+   dropdown exists — unless they have already changed the target list
+   in Settings (then they found it on their own and it never fires).
+   It never interrupts the tour: if the timer lands while the tour is
+   up, the nudge waits and shows when the tour ends. Its "Open
+   Settings" button opens Settings with the Targets section already
+   expanded, so the checkboxes are the first thing seen. */
+
+interface TourStop {
+  /** The element(s) the ring wraps; several elements ring their union. */
+  anchors: () => HTMLElement[];
+  title: string;
+  /** App-authored copy (constants, never user input). */
+  body: string;
+}
+
+const TOUR_STOPS: TourStop[] = [
+  {
+    anchors: () => [document.querySelector<HTMLElement>(".search-box")!],
+    title: "Find your place",
+    body: "This is the search box. Type a city, lake, or ZIP — or use the map and target buttons inside it to pick where you are.",
+  },
+  {
+    anchors: () => [$("#target")],
+    title: "Pick a target",
+    body: "Choose what you're after — a fish, or game. Settings lets you choose which targets appear in this list.",
+  },
+  {
+    anchors: () => [$("#day-picker")],
+    title: "Pick a day",
+    body: "Today, Tomorrow, or Day after. Once a place and target are set, the big panel below rates the day and shows its best windows.",
+  },
+  {
+    anchors: () => [$("#view-picker")],
+    title: "Two views",
+    body: "Planner shows one day in detail. Trends shows the week and month — tap any day there to open it.",
+  },
+  {
+    anchors: () => [$("#refresh-btn"), $("#print-btn")],
+    title: "Refresh and print",
+    body: "Refresh brings in the latest data. Print makes a clean sheet for one day, a week, or a month.",
+  },
+  {
+    anchors: () => [$("#settings-btn")],
+    title: "Add or remove targets here",
+    body: "The gear opens Settings — <strong>this is where you choose which targets appear in the dropdown.</strong> The theme and calendar export choices live there too.",
+  },
+  {
+    anchors: () => [$("#info-btn")],
+    title: "Help any time",
+    body: "This ⓘ menu holds how ratings work, about &amp; credits, and this tour. You're set — tap Done and pick a place.",
+  },
+];
+
+let tourActive = false;
+let tourMode: "tour" | "nudge" = "tour";
+let tourStep = 0;
+let nudgeTimer: number | null = null;
+let nudgePending = false;
+
+/** The rect the ring wraps: one element's box, or the union of several. */
+function tourAnchorRect(els: HTMLElement[]): DOMRect {
+  let r = els[0].getBoundingClientRect();
+  for (const el of els.slice(1)) {
+    const b = el.getBoundingClientRect();
+    r = new DOMRect(
+      Math.min(r.left, b.left),
+      Math.min(r.top, b.top),
+      Math.max(r.right, b.right) - Math.min(r.left, b.left),
+      Math.max(r.bottom, b.bottom) - Math.min(r.top, b.top),
+    );
+  }
+  return r;
+}
+
+/** Position the ring on the current anchors and the card beside it:
+ *  below the ring when it fits, above when it doesn't (the same flip
+ *  rule as #59's menus). The caret lands on the anchor's center. */
+function layoutTour(scroll: boolean): void {
+  const stop = TOUR_STOPS[tourStep];
+  const els = stop.anchors();
+  if (scroll) {
+    // Measuring must happen with the page free to move: release the
+    // scroll lock, bring the anchor into view, then re-lock below.
+    document.body.classList.remove("modal-open");
+    els[0].scrollIntoView({ block: "nearest" });
+  }
+  const rect = tourAnchorRect(els);
+  const pad = 4;
+  const ring = $("#tour-ring");
+  ring.style.left = `${rect.left - pad}px`;
+  ring.style.top = `${rect.top - pad}px`;
+  ring.style.width = `${rect.width + pad * 2}px`;
+  ring.style.height = `${rect.height + pad * 2}px`;
+
+  const card = $("#tour-card");
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const cardW = Math.min(358, vw - 32);
+  card.style.width = `${cardW}px`;
+  const cardH = card.offsetHeight;
+  let top = rect.bottom + pad + 14;
+  let caretBelow = false;
+  if (top + cardH > vh - 12) {
+    top = rect.top - pad - 14 - cardH;
+    caretBelow = true;
+  }
+  if (top < 12) top = 12;
+  const left = Math.min(Math.max(16, rect.left - pad), vw - cardW - 16);
+  card.style.left = `${left}px`;
+  card.style.top = `${top}px`;
+  const cx = rect.left + rect.width / 2 - left;
+  card.style.setProperty("--caret-x", `${Math.min(Math.max(24, cx), cardW - 24)}px`);
+  card.classList.toggle("caret-below", caretBelow);
+  document.body.classList.add("modal-open");
+}
+
+function renderTourStep(): void {
+  const stop = TOUR_STOPS[tourStep];
+  $("#tour-eyebrow").textContent = "Guided tour";
+  $("#tour-count").textContent = `Step ${tourStep + 1} of ${TOUR_STOPS.length}`;
+  $("#tour-title").textContent = stop.title;
+  $("#tour-body").innerHTML = stop.body;
+  $("#tour-left").textContent = "Skip tour";
+  // The last stop has no Skip (locked design): there is nothing
+  // left to skip — Done is the way out.
+  $("#tour-left").style.display = tourStep === TOUR_STOPS.length - 1 ? "none" : "";
+  $("#tour-back").style.display = tourStep > 0 ? "" : "none";
+  $("#tour-next").textContent = tourStep === TOUR_STOPS.length - 1 ? "Done" : "Next";
+  layoutTour(true);
+}
+
+function startTour(): void {
+  tourMode = "tour";
+  tourStep = 0;
+  tourActive = true;
+  $("#tour-layer").hidden = false;
+  renderTourStep();
+}
+
+/** Has the user already found the target picker on their own? The
+ *  saved list differing from the default subset (in either direction)
+ *  is the evidence — the nudge's whole point is then moot. */
+function targetsCustomized(): boolean {
+  const cur = state.settings.targets;
+  return (
+    cur.length !== DEFAULT_TARGET_IDS.length ||
+    cur.some((id) => !DEFAULT_TARGET_IDS.includes(id))
+  );
+}
+
+function showNudge(): void {
+  tourMode = "nudge";
+  tourStep = 5; // the Settings gear stop supplies the ring anchor
+  tourActive = true;
+  $("#tour-layer").hidden = false;
+  $("#tour-eyebrow").textContent = "More targets";
+  $("#tour-count").textContent = "";
+  $("#tour-title").textContent = "Want more targets?";
+  $("#tour-body").innerHTML =
+    `Your dropdown is showing <strong>${state.settings.targets.length} of ${TARGETS.length}</strong> ` +
+    "targets. This gear opens Settings, where you add or remove them.";
+  $("#tour-left").textContent = "Not now";
+  $("#tour-left").style.display = "";
+  $("#tour-back").style.display = "none";
+  $("#tour-next").textContent = "Open Settings";
+  layoutTour(true);
+}
+
+/** Close the layer. Closing the tour marks it seen (finish and skip
+ *  alike); closing the nudge marks it seen too — any answer counts.
+ *  A nudge that came due while the tour was up shows now. */
+function endTour(): void {
+  const wasMode = tourMode;
+  $("#tour-layer").hidden = true;
+  tourActive = false;
+  document.body.classList.remove("modal-open");
+  if (wasMode === "tour") {
+    markTourSeen();
+    if (nudgePending) {
+      nudgePending = false;
+      showNudge();
+    }
+  } else {
+    markNudgeSeen();
+  }
+}
+
+/** Arm the one-time nudge after the first-ever dropdown pick. Read
+ *  at pick time (not cached at startup) so state saved moments ago —
+ *  or a flag set by another flow — is always honored. */
+function maybeArmNudge(): void {
+  if (nudgeSeen() || targetsCustomized() || nudgeTimer !== null) return;
+  nudgeTimer = window.setTimeout(() => {
+    nudgeTimer = null;
+    if (nudgeSeen() || targetsCustomized()) return;
+    // Already in Settings: they found it — count the nudge as seen
+    // without ever showing it.
+    if (!$("#settings-modal").hidden) {
+      markNudgeSeen();
+      return;
+    }
+    if (tourActive) {
+      nudgePending = true;
+      return;
+    }
+    showNudge();
+  }, 3000);
 }
 
 /** #25: the Settings theme chips mirror the saved preference when the
@@ -2310,6 +2538,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (TARGETS.some((t) => t.id === v)) {
       state.targetId = v;
       saveLastTargetId(v);
+      maybeArmNudge(); // #68: the first-ever pick arms the one-time nudge
     } else {
       state.targetId = null;
     }
@@ -2391,9 +2620,39 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (willOpen) placeMenu($("#info-btn"), menu);
     $("#info-btn").setAttribute("aria-expanded", String(willOpen));
   });
+  $("#menu-tour").addEventListener("click", () => {
+    closeInfoMenu();
+    startTour();
+  });
   $("#menu-how").addEventListener("click", () => {
     closeInfoMenu();
     openModal("info-modal");
+  });
+  // #68: tour / nudge card buttons. One set of controls serves both
+  // modes; renderTourStep/showNudge set the labels per mode.
+  $("#tour-left").addEventListener("click", () => endTour());
+  $("#tour-back").addEventListener("click", () => {
+    if (tourMode === "tour" && tourStep > 0) {
+      tourStep--;
+      renderTourStep();
+    }
+  });
+  $("#tour-next").addEventListener("click", () => {
+    if (tourMode === "nudge") {
+      endTour();
+      // Land on the target picker itself, not the Settings front door.
+      syncThemeChips();
+      syncTargetChecks();
+      setAccSection("targets");
+      openModal("settings-modal");
+      return;
+    }
+    if (tourStep < TOUR_STOPS.length - 1) {
+      tourStep++;
+      renderTourStep();
+    } else {
+      endTour();
+    }
   });
   $("#menu-about").addEventListener("click", () => {
     closeInfoMenu();
@@ -2413,7 +2672,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   // #35: an open menu closes when the page scrolls or resizes (the
   // button it hangs from has moved).
   window.addEventListener("scroll", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); }, { passive: true });
-  window.addEventListener("resize", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); fitActionButtons(); });
+  window.addEventListener("resize", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); fitActionButtons(); if (tourActive) layoutTour(false); });
+  // #68: the tour can start before the brand lockup image loads, and
+  // the header grows when it lands — re-measure once everything has
+  // loaded so the ring sits on the real part, not its pre-load spot.
+  window.addEventListener("load", () => { if (tourActive) layoutTour(false); });
   // #56: the badge menu's two rows supply only the platform; the
   // opening control supplied the action (openBadgeMenu).
   document.querySelectorAll<HTMLElement>("#badge-menu [data-badge-platform]").forEach((item) =>
@@ -2486,6 +2749,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   // decided 2026-11-12) → pick list.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    if (tourActive) {
+      endTour();
+      return;
+    }
     if ($("#badge-menu") && !$("#badge-menu").hidden) {
       closeBadgeMenu();
       badgeMenuAnchor = null;
@@ -2580,7 +2847,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.6.3";
+  let versionLabel = "Zero Light 0.6.4";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.
@@ -2592,4 +2859,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#about-content").innerHTML = aboutHtml(versionLabel);
 
   void ensureData();
+
+  // #68: the guided tour starts once, on the first open on a device
+  // that has not seen it. (Devices upgrading from before #68 have no
+  // flag stored, so they get the one showing too — that is their
+  // first open with the tour in it.)
+  if (!tourSeen()) startTour();
 });

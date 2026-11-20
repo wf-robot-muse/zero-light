@@ -80,6 +80,7 @@
           </div>
           <p class="subtitle">Your best times to hunt and fish.</p>
           <div id="info-menu" class="info-menu" role="menu" hidden>
+            <button type="button" role="menuitem" id="menu-tour">How to use Zero Light</button>
             <button type="button" role="menuitem" id="menu-how">How ratings work</button>
             <button type="button" role="menuitem" id="menu-about">About &amp; credits</button>
           </div>
@@ -284,6 +285,29 @@
         <div class="row modal-actions">
           <button id="map-use-modal" type="button">Use this spot</button>
           <button id="map-cancel-modal" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- #68: the guided tour and the "more targets" nudge share this
+         one overlay layer — a ring around the highlighted part (its
+         box-shadow dims the rest of the screen) plus a callout card.
+         Filled and positioned by the tour code in main.ts. -->
+    <div id="tour-layer" hidden>
+      <div id="tour-ring"></div>
+      <div id="tour-card" role="dialog" aria-label="Introduction">
+        <div class="tour-top">
+          <span class="tour-eyebrow" id="tour-eyebrow">Guided tour</span>
+          <span class="tour-count" id="tour-count"></span>
+        </div>
+        <h2 id="tour-title"></h2>
+        <p id="tour-body"></p>
+        <div class="tour-foot">
+          <button type="button" class="tour-plain" id="tour-left">Skip tour</button>
+          <div class="tour-nav">
+            <button type="button" class="tour-plain" id="tour-back">Back</button>
+            <button type="button" class="tour-primary" id="tour-next">Next</button>
+          </div>
         </div>
       </div>
     </div>

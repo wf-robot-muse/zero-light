@@ -193,6 +193,34 @@ export function saveBaseMapId(id: BaseMapId): void {
   set(BASE_MAP_KEY, id);
 }
 
+// ------------------------------------------------------- #68 intro flags
+// Two one-time introductions remember, on this device only, that they
+// have been shown: the first-run guided tour and the "more targets"
+// nudge that follows the first-ever dropdown pick. Each flag is the
+// string "1" when seen; anything else (missing, garbled) reads as not
+// seen, so a damaged value simply lets the introduction show once
+// more rather than suppressing it forever (input-security rule: the
+// persisted value is re-validated on load like every other key here).
+
+const TOUR_SEEN_KEY = "zl_tour_seen";
+const NUDGE_SEEN_KEY = "zl_nudge_seen";
+
+export function tourSeen(): boolean {
+  return get(TOUR_SEEN_KEY) === "1";
+}
+
+export function markTourSeen(): void {
+  set(TOUR_SEEN_KEY, "1");
+}
+
+export function nudgeSeen(): boolean {
+  return get(NUDGE_SEEN_KEY) === "1";
+}
+
+export function markNudgeSeen(): void {
+  set(NUDGE_SEEN_KEY, "1");
+}
+
 // ------------------------------------------------------- last location
 // Item #17: the user's selected location is per-user data — it is kept
 // ONLY on this device, never in the shared Layer 2 cache. It is
