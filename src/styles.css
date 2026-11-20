@@ -593,6 +593,8 @@ body.modal-open { overflow: hidden; }
 .save-warn-card { position: relative; padding-right: 42px; }
 .save-warn-card p { margin: 0; }
 .save-warn-close { position: absolute; top: 6px; right: 6px; }
+/* ONE-OFF DIAGNOSTIC (temporary): the full save-failure text. */
+.save-warn-card .save-warn-detail { margin: 6px 0 0; font-size: 0.78em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
 
 .tooltip {
   position: absolute; z-index: 60; max-width: 240px;
