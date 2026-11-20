@@ -56,7 +56,6 @@ import {
 import {
   loadSettings,
   saveSettings,
-  getSaveDiagnostic,
   loadLastPlace,
   saveLastPlace,
   loadLastTargetId,
@@ -2566,24 +2565,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     // at the top of the main screen, never by trapping the user in
     // Settings. A successful save hides the card again.
     $("#save-warn-card").hidden = savedOk;
-    // ONE-OFF DIAGNOSTIC (temporary): on a failed save, show the full
-    // failure text on the warning card, plus the browser's storage
-    // usage/quota figures when it reports them.
-    if (!savedOk) {
-      const detail = $("#save-warn-detail");
-      detail.textContent = getSaveDiagnostic();
-      if (typeof navigator.storage?.estimate === "function") {
-        navigator.storage
-          .estimate()
-          .then((est) => {
-            if (est.usage !== undefined || est.quota !== undefined) {
-              detail.textContent =
-                `${getSaveDiagnostic()} | storage usage: ${est.usage ?? "?"} bytes of ${est.quota ?? "?"} quota`;
-            }
-          })
-          .catch(() => undefined);
-      }
-    }
   });
   $("#save-warn-close").addEventListener("click", () => {
     $("#save-warn-card").hidden = true;

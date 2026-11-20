@@ -67,30 +67,13 @@ function get(k: string): string {
   }
 }
 
-/* ONE-OFF DIAGNOSTIC (temporary — the #66 Safari investigation, NOT
- * part of the product; removed when the test ends): the first storage
- * write error of the current save, verbatim, and the composed failure
- * description saveSettings leaves for the warning card to display. */
-let diagWriteError: string | null = null;
-let diagText = "";
-
 function set(k: string, v: string): void {
   try {
     if (v) localStorage.setItem(k, v);
     else localStorage.removeItem(k);
-  } catch (e) {
-    if (diagWriteError === null) {
-      diagWriteError =
-        `write to ${k} threw — ` +
-        (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
-    }
+  } catch {
     /* storage unavailable — settings simply won't persist */
   }
-}
-
-/** ONE-OFF DIAGNOSTIC: why the last save failed, in full. */
-export function getSaveDiagnostic(): string {
-  return diagText;
 }
 
 /** Item #63: the persisted enabled-target list is untrusted input —
@@ -136,31 +119,16 @@ export function loadSettings(): AppSettings {
  *  settings reset" — the caller checks this result and tells the user
  *  at save time instead. */
 export function saveSettings(s: AppSettings): boolean {
-  diagWriteError = null; // ONE-OFF DIAGNOSTIC: fresh save, fresh capture
   set(KEYS.includeTypical, s.includeTypical ? "1" : "");
   set(KEYS.includeDontGo, s.includeDontGo ? "1" : "");
   set(KEYS.theme, s.theme);
   set(KEYS.targets, JSON.stringify(s.targets));
-  const gotTypical = get(KEYS.includeTypical);
-  const gotDontGo = get(KEYS.includeDontGo);
-  const gotTheme = get(KEYS.theme);
-  const gotTargets = get(KEYS.targets);
-  const ok =
-    gotTypical === (s.includeTypical ? "1" : "") &&
-    gotDontGo === (s.includeDontGo ? "1" : "") &&
-    gotTheme === s.theme &&
-    gotTargets === JSON.stringify(s.targets);
-  // ONE-OFF DIAGNOSTIC: leave the full failure description for the
-  // warning card — the exact write error when the browser threw one,
-  // otherwise the read-back values against what was written.
-  diagText = ok
-    ? ""
-    : (diagWriteError ??
-      "no error thrown — the writes were silently dropped. " +
-        `theme read back ${JSON.stringify(gotTheme)} (wrote ${JSON.stringify(s.theme)}); ` +
-        `targets read back ${gotTargets || "(empty)"} (wrote ${JSON.stringify(s.targets)}); ` +
-        `typical read back ${JSON.stringify(gotTypical)}; dontgo read back ${JSON.stringify(gotDontGo)}`);
-  return ok;
+  return (
+    get(KEYS.includeTypical) === (s.includeTypical ? "1" : "") &&
+    get(KEYS.includeDontGo) === (s.includeDontGo ? "1" : "") &&
+    get(KEYS.theme) === s.theme &&
+    get(KEYS.targets) === JSON.stringify(s.targets)
+  );
 }
 
 // ------------------------------------------------------- last target (#24)
