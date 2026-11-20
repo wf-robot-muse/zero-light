@@ -71,6 +71,7 @@ import {
 // #29/#30 logo masters (assets/logo/). The full lockup ships in two
 // colorways and swaps with the theme; it is the header brand (#30) and
 // tops the About modal. The square mark remains the app icon / favicon.
+import { sweepCache } from "./cache";
 import lockupLightUrl from "../assets/logo/zero-light-lockup-on-light.svg?url";
 import lockupDarkUrl from "../assets/logo/zero-light-lockup-on-dark.svg?url";
 
@@ -157,6 +158,13 @@ export interface Place {
   lon: number;
   label: string;
 }
+
+// #67: startup housekeeping — drop Layer 1 cache entries that expired
+// more than a week ago, so the shared localStorage bucket cannot grow
+// without bound again (the growth is what filled it and broke settings
+// saves in Safari). Recently-expired entries stay for the offline
+// stale fallback.
+sweepCache(7 * 86400_000);
 
 const state = {
   place: null as Place | null,
@@ -2572,7 +2580,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.6.2";
+  let versionLabel = "Zero Light 0.6.3";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.

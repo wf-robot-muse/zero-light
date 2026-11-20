@@ -16,6 +16,7 @@
 export const CACHE_ENDPOINT = "https://zero-light-cache.wf-robot-muse.workers.dev";
 
 import { TARGETS } from "./scoring";
+import { evictOldestCacheEntries, sweepCache } from "./cache";
 
 const KEYS = {
   includeTypical: "zl_export_typical",
@@ -67,13 +68,38 @@ function get(k: string): string {
   }
 }
 
-function set(k: string, v: string): void {
+/**
+ * #67: write one key (a null value removes it), making room if the
+ * bucket refuses. The Layer 1 cache (src/cache.ts) shares this origin's
+ * localStorage bucket and, before #67, grew until the browser capped
+ * it — after which every settings write needing new space threw
+ * QuotaExceededError while long-resident keys (like the last location)
+ * kept working, so settings silently stopped saving in Wade's Safari.
+ * These values are a few hundred bytes and outrank cached forecasts:
+ * on a refused write, sweep expired cache entries, evict the oldest
+ * cache entries, and retry once. Only zl_cache_* keys are ever freed —
+ * never settings keys, never another app's data.
+ */
+function writeWithRoom(k: string, v: string | null): void {
+  const put = () => {
+    if (v === null) localStorage.removeItem(k);
+    else localStorage.setItem(k, v);
+  };
   try {
-    if (v) localStorage.setItem(k, v);
-    else localStorage.removeItem(k);
+    put();
   } catch {
-    /* storage unavailable — settings simply won't persist */
+    try {
+      sweepCache(0);
+      evictOldestCacheEntries(5);
+      put();
+    } catch {
+      /* storage unavailable — the value simply won't persist */
+    }
   }
+}
+
+function set(k: string, v: string): void {
+  writeWithRoom(k, v ? v : null);
 }
 
 /** Item #63: the persisted enabled-target list is untrusted input —
@@ -205,12 +231,10 @@ export function loadLastPlace(): SavedPlace | null {
 }
 
 export function saveLastPlace(p: SavedPlace): void {
-  try {
-    localStorage.setItem(
-      LAST_KEY,
-      JSON.stringify({ lat: p.lat, lon: p.lon, label: p.label.slice(0, 120) }),
-    );
-  } catch {
-    /* storage unavailable */
-  }
+  // #67: routed through writeWithRoom like the settings writes, so a
+  // full bucket frees cache space for this write too.
+  writeWithRoom(
+    LAST_KEY,
+    JSON.stringify({ lat: p.lat, lon: p.lon, label: p.label.slice(0, 120) }),
+  );
 }

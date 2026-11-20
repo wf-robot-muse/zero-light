@@ -1518,6 +1518,84 @@ try {
     check("#66 the save-warning card dismisses", dismissed);
     await ctx.close();
   }
+
+  // #67: the Layer 1 cache shares the localStorage bucket with the
+  // settings and, before #67, grew until the browser capped it — after
+  // which settings writes threw QuotaExceededError (Wade's Safari).
+  // Two behaviours: the startup sweep drops entries expired beyond the
+  // 7-day grace but keeps recent ones (offline stale fallback); and a
+  // settings save refused for quota frees cache space and retries, so
+  // the save succeeds instead of warning.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
+    await ctx.addInitScript(() => {
+      const now = Date.now();
+      const entry = (t, exp) =>
+        JSON.stringify({ t, exp, data: { seeded: true } });
+      localStorage.setItem("zl_cache_old", entry(now - 31 * 86400_000, now - 30 * 86400_000));
+      localStorage.setItem("zl_cache_recent", entry(now - 3600_000, now - 3600_000));
+      localStorage.setItem("zl_cache_fresh", entry(now, now + 86400_000));
+    });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    const swept = await p.evaluate(() => ({
+      old: localStorage.getItem("zl_cache_old"),
+      recent: localStorage.getItem("zl_cache_recent") !== null,
+      fresh: localStorage.getItem("zl_cache_fresh") !== null,
+    }));
+    check(
+      "#67 startup sweep drops long-expired cache entries, keeps recent ones",
+      swept.old === null && swept.recent && swept.fresh,
+    );
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
+    await ctx.addInitScript(() => {
+      // A bucket with no room for settings-sized writes: a settings
+      // write throws QuotaExceededError while the seeded filler cache
+      // entry (the oldest thing in the bucket) is still present.
+      localStorage.setItem(
+        "zl_cache_filler",
+        JSON.stringify({ t: 1000, exp: Date.now() + 86400_000, data: { seeded: true } }),
+      );
+      const orig = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (k, v) {
+        if (
+          !String(k).startsWith("zl_cache_") &&
+          localStorage.getItem("zl_cache_filler") !== null
+        ) {
+          const err = new Error("The quota has been exceeded.");
+          err.name = "QuotaExceededError";
+          throw err;
+        }
+        return orig.call(this, k, v);
+      };
+    });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.click("#settings-btn");
+    await p.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+    await p.click('[data-acc-head="targets"]');
+    await p.uncheck('#target-groups input[data-target-id="redfish"]');
+    await p.click("#save-settings");
+    await p.waitForSelector("#settings-modal[hidden]", { state: "attached", timeout: 8000 });
+    const healed = await p.evaluate(() => ({
+      warned: !document.querySelector("#save-warn-card")?.hidden,
+      stored: localStorage.getItem("zl_enabled_targets") ?? "",
+      filler: localStorage.getItem("zl_cache_filler"),
+    }));
+    check(
+      "#67 a settings save refused for quota frees cache space and succeeds",
+      !healed.warned &&
+        healed.stored.includes('"catfish"') &&
+        !healed.stored.includes('"redfish"') &&
+        healed.filler === null,
+    );
+    await ctx.close();
+  }
 } catch (err) {
   console.log("ERROR", err.message);
   failures.push("exception: " + err.message);
