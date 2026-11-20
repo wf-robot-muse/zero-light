@@ -588,6 +588,11 @@ body.modal-open { overflow: hidden; }
 .target-count { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 0.88em; color: var(--muted); }
 .settings-foot { flex: none; border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; display: flex; justify-content: flex-end; }
 .settings-foot > button { white-space: nowrap; }
+/* #66 (revised): the save-failure card at the top of the main screen —
+   the approx card's amber, with a dismiss button at its top right. */
+.save-warn-card { position: relative; padding-right: 42px; }
+.save-warn-card p { margin: 0; }
+.save-warn-close { position: absolute; top: 6px; right: 6px; }
 
 .tooltip {
   position: absolute; z-index: 60; max-width: 240px;

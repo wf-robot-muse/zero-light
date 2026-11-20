@@ -1470,6 +1470,54 @@ try {
     check("#65 pheasant badge shows its head (mirrored draw)", headPixels > 200);
     await ctx.close();
   }
+
+  // #66: a settings save whose writes do not stick (a browser context
+  // that refuses site data — the settings then reset on the next
+  // reload, Wade's #66 report) must still apply for the session and
+  // still close Settings, with the failure reported on a dismissible
+  // card on the main screen instead of silently. (The badge share-
+  // sheet route first built for #66 was dropped at Wade's direction;
+  // web badges keep the plain download.)
+  {
+    // Storage that silently drops the targets write: the save must
+    // still apply for the session, still close Settings and return to
+    // the main screen with the updated dropdown (#66 revised per Wade),
+    // and report the failure on a dismissible card there.
+    const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
+    await ctx.addInitScript(() => {
+      const orig = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (k, v) {
+        if (k === "zl_enabled_targets") return; // silently dropped
+        return orig.call(this, k, v);
+      };
+    });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.click("#settings-btn");
+    await p.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+    await p.click('[data-acc-head="targets"]');
+    await p.uncheck('#target-groups input[data-target-id="redfish"]');
+    await p.click("#save-settings");
+    await p.waitForSelector("#settings-modal[hidden]", { state: "attached", timeout: 8000 });
+    await p.waitForSelector("#save-warn-card:not([hidden])", { timeout: 8000 });
+    const applied = await p.evaluate(
+      () =>
+        ![...document.querySelectorAll("#target option")].some(
+          (o) => o.value === "redfish",
+        ),
+    );
+    check(
+      "#66 a save that does not stick still applies, closes, and warns on the main screen",
+      applied,
+    );
+    await p.click("#save-warn-close");
+    const dismissed = await p.evaluate(
+      () => document.querySelector("#save-warn-card")?.hidden === true,
+    );
+    check("#66 the save-warning card dismisses", dismissed);
+    await ctx.close();
+  }
 } catch (err) {
   console.log("ERROR", err.message);
   failures.push("exception: " + err.message);

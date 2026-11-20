@@ -94,6 +94,14 @@
           </div>
         </header>
 
+        <!-- #66 (revised): shown only when a settings save did not stick.
+             The save still applies for the session and Settings closes as
+             always — this dismissible card is the failure notice. -->
+        <div id="save-warn-card" class="approx-card save-warn-card" hidden>
+          <p><strong>Settings could not be saved on this device.</strong> They apply until this page is reloaded.</p>
+          <button type="button" class="icon-btn save-warn-close" id="save-warn-close" title="Dismiss" aria-label="Dismiss">✕</button>
+        </div>
+
         <section class="card controls">
           <div class="field location-field">
             <label for="place-search">Location</label>

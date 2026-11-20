@@ -112,11 +112,23 @@ export function loadSettings(): AppSettings {
   };
 }
 
-export function saveSettings(s: AppSettings): void {
+/** Persist the settings; returns true only when the values read back
+ *  exactly as written. #66: a browser context that refuses site data
+ *  (Private Browsing, blocked storage) makes the writes fail or
+ *  silently drop, and the loss otherwise surfaces much later as "my
+ *  settings reset" — the caller checks this result and tells the user
+ *  at save time instead. */
+export function saveSettings(s: AppSettings): boolean {
   set(KEYS.includeTypical, s.includeTypical ? "1" : "");
   set(KEYS.includeDontGo, s.includeDontGo ? "1" : "");
   set(KEYS.theme, s.theme);
   set(KEYS.targets, JSON.stringify(s.targets));
+  return (
+    get(KEYS.includeTypical) === (s.includeTypical ? "1" : "") &&
+    get(KEYS.includeDontGo) === (s.includeDontGo ? "1" : "") &&
+    get(KEYS.theme) === s.theme &&
+    get(KEYS.targets) === JSON.stringify(s.targets)
+  );
 }
 
 // ------------------------------------------------------- last target (#24)

@@ -2546,7 +2546,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       // #63: persist the enabled targets in catalog order.
       targets: TARGETS.filter((t) => pendingTargets.has(t.id)).map((t) => t.id),
     };
-    saveSettings(state.settings);
+    const savedOk = saveSettings(state.settings);
     applyTheme();
     // #63: the dropdown rebuilds from the new enabled set. If the
     // selected target was just disabled, rebuildTargets falls back to
@@ -2559,11 +2559,20 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
     $("#settings-modal").hidden = true;
     // #34: no "settings saved" confirmation message (Wade, 2026-11-13).
+    // #66 (revised per Wade): a save that did not stick still applies
+    // for the session and still returns to the main screen with the
+    // updated dropdown — the failure is reported by a dismissible card
+    // at the top of the main screen, never by trapping the user in
+    // Settings. A successful save hides the card again.
+    $("#save-warn-card").hidden = savedOk;
+  });
+  $("#save-warn-close").addEventListener("click", () => {
+    $("#save-warn-card").hidden = true;
   });
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.6.1";
+  let versionLabel = "Zero Light 0.6.2";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.
