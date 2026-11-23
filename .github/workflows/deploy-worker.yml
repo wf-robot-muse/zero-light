@@ -7,8 +7,9 @@ name: Deploy cache Worker
 #   2. Applies worker/schema.sql (idempotent).
 #   3. Deploys the Worker.
 #   4. Sets Worker secrets from repo secrets: GEOAPIFY_API_KEY,
-#      USGS_API_KEY, NCEI_CDO_TOKEN (each skipped with a notice when
-#      the repo secret is unset); generates PURGE_SECRET once.
+#      USGS_API_KEY, NCEI_CDO_TOKEN, AIRNOW_API_KEY, FIRMS_MAP_KEY
+#      (the last two are item #69's; each is skipped with a notice
+#      when the repo secret is unset); generates PURGE_SECRET once.
 # Requires repo secrets CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID;
 # without them the job reports the missing setup and exits cleanly.
 
@@ -44,6 +45,8 @@ jobs:
           GEOAPIFY_API_KEY: ${{ secrets.GEOAPIFY_API_KEY }}
           USGS_API_KEY: ${{ secrets.USGS_API_KEY }}
           NCEI_CDO_TOKEN: ${{ secrets.NCEI_CDO_TOKEN }}
+          AIRNOW_API_KEY: ${{ secrets.AIRNOW_API_KEY }}
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
         run: |
           set -euo pipefail
           WR="npx -y wrangler@3"
@@ -83,6 +86,8 @@ jobs:
           put_secret GEOAPIFY_API_KEY "$GEOAPIFY_API_KEY"
           put_secret USGS_API_KEY "$USGS_API_KEY"
           put_secret NCEI_CDO_TOKEN "$NCEI_CDO_TOKEN"
+          put_secret AIRNOW_API_KEY "$AIRNOW_API_KEY"
+          put_secret FIRMS_MAP_KEY "$FIRMS_MAP_KEY"
 
           if $WR secret list | grep -q "PURGE_SECRET"; then
             echo "Worker secret PURGE_SECRET already set — keeping it."

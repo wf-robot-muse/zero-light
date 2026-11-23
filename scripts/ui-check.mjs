@@ -203,6 +203,22 @@ try {
   await page.route("**gis.myfwc.com**", (route) =>
     route.fulfill({ contentType: "application/json", body: JSON.stringify({ features: [] }) }),
   );
+  // #69: environmental routes — benign empties, so no block ever
+  // waits on a real network call for these.
+  const envBenign = {
+    air: { source: "openmeteo", current: { aqi: 38 }, daily: [] },
+    spill: { covered: true, notices: [] },
+    cyan: { latest: null },
+    habstate: { samples: [] },
+    wqp: { entero: [], ecoli: [] },
+    firms: { detections: [] },
+    shellfish: { region: null, areas: [] },
+  };
+  for (const [routeName, body] of Object.entries(envBenign)) {
+    await page.route(`**workers.dev/${routeName}**`, (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(body) }),
+    );
+  }
   await page.route("**tile.openstreetmap.org**", (route) =>
     route.fulfill({ contentType: "image/png", body: Buffer.alloc(0) }),
   );
@@ -594,7 +610,7 @@ try {
   // the selected target is disabled, the min-one guardrail, and Reset.
   await page.click("#settings-btn");
   await page.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
-  check("settings has three accordion sections (#63)", (await page.locator(".acc-head").count()) === 3);
+  check("settings has four accordion sections (#63, #69)", (await page.locator(".acc-head").count()) === 4);
   check("targets summary shows the default count (#63)", (await page.textContent("#acc-sum-targets")) === "10 of 25 shown");
   await page.click('[data-acc-head="targets"]');
   check("targets section lists all 25 targets (#63)", (await page.locator("#target-groups input[data-target-id]").count()) === 25);
@@ -1025,6 +1041,22 @@ try {
     await p.route("**gis.myfwc.com**", (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ features: [] }) }),
     );
+    // #69: environmental routes — benign empties (see the main
+    // context's stubs). The #69 blocks below override these.
+    const envBenign = {
+      air: { source: "openmeteo", current: { aqi: 38 }, daily: [] },
+      spill: { covered: true, notices: [] },
+      cyan: { latest: null },
+      habstate: { samples: [] },
+      wqp: { entero: [], ecoli: [] },
+      firms: { detections: [] },
+      shellfish: { region: null, areas: [] },
+    };
+    for (const [routeName, body] of Object.entries(envBenign)) {
+      await p.route(`**workers.dev/${routeName}**`, (route) =>
+        route.fulfill({ contentType: "application/json", body: JSON.stringify(body) }),
+      );
+    }
     await p.route("**tile.openstreetmap.org**", (route) =>
       route.fulfill({ contentType: "image/png", body: Buffer.alloc(0) }),
     );
@@ -1761,6 +1793,183 @@ try {
       { timeout: 8000 },
     );
     check("#68 the nudge shows when the tour ends", true);
+    await p.click("#tour-left");
+    await ctx.close();
+  }
+
+  // #69: environmental data. Worker fixtures drive a sewage veto
+  // (scenario A) and an AQI caution day (scenario B, which also covers
+  // the Settings section). The E1 Water & air block starts collapsed;
+  // its header carries the worst status.
+  const envRoutes = async (p, spill, air) => {
+    await mockRoutesFor(p);
+    const fulfill = (body) => (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
+    await p.route("**workers.dev/air**", fulfill(air));
+    await p.route("**workers.dev/spill**", fulfill(spill));
+    await p.route("**workers.dev/cyan**", fulfill({ latest: null }));
+    await p.route("**workers.dev/habstate**", fulfill({ samples: [] }));
+    await p.route("**workers.dev/wqp**", fulfill({ entero: [], ecoli: [] }));
+    await p.route("**workers.dev/firms**", fulfill({ detections: [] }));
+    await p.route("**workers.dev/shellfish**", fulfill({ region: null, areas: [] }));
+  };
+  const pickTampaRedfish = async (p) => {
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.fill("#place-search", "27.9506, -82.4572");
+    await p.press("#place-search", "Enter");
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Pick a target to see best times"),
+      null,
+      { timeout: 20000 },
+    );
+    await p.selectOption("#target", "redfish");
+  };
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1");
+    });
+    const p = await ctx.newPage();
+    await envRoutes(
+      p,
+      {
+        covered: true,
+        notices: [
+          {
+            kind: "sewage",
+            title: "Hillsborough River",
+            facility: "City of Tampa",
+            startedMs: Date.now() - 86400_000,
+            ongoing: true,
+            lat: 27.9606,
+            lon: -82.4602,
+            source: "FL pollution notices",
+          },
+        ],
+      },
+      { source: "airnow", current: { aqi: 42 }, daily: [{ date: dateStr(new Date()), aqi: 42 }] },
+    );
+    await pickTampaRedfish(p);
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("sewage spill"),
+      null,
+      { timeout: 20000 },
+    );
+    check("#69 a nearby sewage spill vetoes the day in the planner", true);
+    await p.click('#view-picker .chip[data-view="trends"]');
+    check(
+      "#69 the veto day carries the red dot in Trends",
+      (await p.locator("#trends .day-block >> nth=0 >> .env-dot.veto").count()) === 1,
+    );
+    check(
+      "#69 the dot legend prints when a dot exists",
+      ((await p.locator("#trends .legend").allTextContents()).join(" ").includes("Don't go day")),
+    );
+    await p.click("#trends .day-block >> nth=0");
+    await p.waitForSelector("#day-modal:not([hidden])", { timeout: 8000 });
+    check("#69 day detail shows the Water & air block", (await p.locator("#day-modal .wa-block").count()) === 1);
+    check(
+      "#69 the block starts collapsed (E1)",
+      (await p.evaluate(() => document.querySelector("#day-modal .wa-body")?.hidden)) === true,
+    );
+    check(
+      "#69 the collapsed header carries the worst status",
+      ((await p.textContent("#day-modal .wa-sum")) ?? "").includes("Don't go"),
+    );
+    await p.click("#day-modal .wa-head");
+    check(
+      "#69 tapping the header expands the block",
+      (await p.evaluate(() => document.querySelector("#day-modal .wa-body")?.hidden)) === false,
+    );
+    const waText = (await p.textContent("#day-modal .wa-body")) ?? "";
+    check("#69 the spill row shows inside the block", waText.includes("Spills") && waText.includes("Hillsborough River"));
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1");
+    });
+    const p = await ctx.newPage();
+    const today = new Date();
+    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    await envRoutes(
+      p,
+      { covered: true, notices: [] },
+      {
+        source: "airnow",
+        current: { aqi: 132 },
+        daily: [
+          { date: dateStr(today), aqi: 132 },
+          { date: dateStr(tomorrow), aqi: 160 },
+        ],
+      },
+    );
+    await pickTampaRedfish(p);
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("AQI 132"),
+      null,
+      { timeout: 20000 },
+    );
+    check("#69 an AQI 132 day raises the held-back banner", true);
+    await p.click('#view-picker .chip[data-view="trends"]');
+    check(
+      "#69 today carries the amber dot",
+      (await p.locator("#trends .day-block >> nth=0 >> .env-dot.caution").count()) === 1,
+    );
+    check(
+      "#69 the AQI 160 forecast day carries the amber dot too",
+      (await p.locator("#trends .day-block >> nth=1 >> .env-dot.caution").count()) === 1,
+    );
+    await p.click("#trends .day-block >> nth=0");
+    await p.waitForSelector("#day-modal:not([hidden])", { timeout: 8000 });
+    check(
+      "#69 the block header counts the caution",
+      ((await p.textContent("#day-modal .wa-sum")) ?? "").includes("1 caution"),
+    );
+    await p.evaluate(() => document.querySelector('#day-modal [data-close="day-modal"]')?.click());
+    await p.waitForSelector("#day-modal[hidden]", { state: "attached", timeout: 8000 });
+    await p.click("#settings-btn");
+    await p.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+    await p.click('[data-acc-head="env"]');
+    check(
+      "#69 settings env section lists 7 toggles",
+      (await p.locator('[data-acc-body="env"] input[type="checkbox"]').count()) === 7,
+    );
+    check(
+      "#69 all 7 env toggles start on",
+      (await p.locator('[data-acc-body="env"] input[type="checkbox"]:checked').count()) === 7,
+    );
+    check("#69 env summary reads 7 of 7 on", (await p.textContent("#acc-sum-env")) === "7 of 7 on");
+    await p.click("#env-air");
+    check("#69 env summary follows the boxes live", (await p.textContent("#acc-sum-env")) === "6 of 7 on");
+    await p.click("#save-settings");
+    await p.waitForSelector("#settings-modal[hidden]", { state: "attached", timeout: 8000 });
+    const stored = await p.evaluate(() => JSON.parse(localStorage.getItem("zl_env_data") ?? "{}"));
+    check("#69 the env choice persists through the verified save", stored.air === false && stored.spill === true);
+    await p.click("#settings-btn");
+    await p.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
+    check(
+      "#69 reopening settings shows the saved toggle off",
+      (await p.evaluate(() => document.querySelector("#env-air")?.checked)) === false,
+    );
+    check("#69 reopening settings shows 6 of 7 on", (await p.textContent("#acc-sum-env")) === "6 of 7 on");
+    await ctx.close();
+  }
+  {
+    // #69: tour stop 6 now names the environmental data choices.
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
+    for (let i = 0; i < 5; i++) await p.click("#tour-next");
+    check(
+      "#69 tour stop 6 names environmental data",
+      ((await p.textContent("#tour-body")) ?? "").includes("environmental data choices"),
+    );
     await p.click("#tour-left");
     await ctx.close();
   }

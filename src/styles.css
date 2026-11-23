@@ -803,3 +803,30 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
   .pcblock .pslot { margin: 3px 0 3px 10px; }
   .pfooter { border-top: 1px solid #bbb; margin-top: 18px; padding-top: 7px; font-size: 0.85em; color: #333; }
 }
+
+/* #69: environmental data — Trends day-cell dots and the day detail's
+   Water & air block (E1: collapsed by default, expands in place). */
+.day-block { position: relative; }
+.env-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; }
+.day-block .env-dot { position: absolute; top: 5px; right: 5px; }
+.env-dot.veto { background: #b3261e; }
+.env-dot.caution { background: #e3b93e; border: 1px solid #8a5200; box-sizing: border-box; }
+.wa-block { margin: 12px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-sizing: border-box; }
+.wa-head { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 10px 12px; background: none; border: none; cursor: pointer; font: inherit; text-align: left; color: inherit; }
+.wa-title { font-weight: 600; }
+.wa-sum { margin-left: auto; font-size: 0.88em; font-weight: 600; }
+.wa-sum.ok { color: #2e7d46; }
+.wa-sum.warn { color: #8a5200; }
+.wa-sum.bad { color: #b3261e; }
+.wa-sum.na { color: var(--muted); }
+[data-theme="dark"] .wa-sum.warn { color: #f0d48a; }
+.wa-chev { color: var(--muted); font-size: 0.85em; }
+.wa-body { padding: 2px 12px 10px; border-top: 1px solid var(--border); }
+.wa-row { display: flex; gap: 8px; padding: 6px 0; align-items: flex-start; }
+.wa-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; }
+.wa-dot.ok { background: #2e7d46; }
+.wa-dot.caution { background: #e3b93e; border: 1px solid #8a5200; box-sizing: border-box; }
+.wa-dot.veto { background: #b3261e; }
+.wa-dot.na { background: var(--muted); }
+.wa-src { color: var(--muted); font-size: 0.85em; }
+.wa-note { color: var(--muted); font-size: 0.88em; margin: 6px 0 2px; }

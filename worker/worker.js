@@ -430,6 +430,555 @@ function handleGeo(request) {
   }, 200);
 }
 
+// ------------------------------------- environmental data (item #69)
+// One route per data family, all following the house rules above:
+// cache-aside in D1 keyed by 0.1° cell, keys only as Worker secrets
+// (AIRNOW_API_KEY, FIRMS_MAP_KEY), every upstream reply shape-checked
+// before it is stored, and a normalized small JSON returned to the
+// app. Distances are NOT baked into cached bodies — rows carry their
+// own lat/lon and the app measures from the user's exact point.
+// Sources verified live at build time (2026-11-23); see the #69 entry
+// in the changes list for what was checked and what was substituted.
+
+/** Cache-aside returning the parsed value (not a Response), so a
+ *  handler can shape its reply after the cache read. Null when the
+ *  upstream fails and no usable stale copy exists. */
+async function cachedRaw(env, ctx, key, ttlSec, staleGraceSec, loader) {
+  const now = Math.floor(Date.now() / 1000);
+  const entry = await getEntry(env, key).catch(() => null);
+  if (entry && entry.expires_at > now) {
+    try {
+      return JSON.parse(entry.body);
+    } catch {
+      /* fall through and refetch */
+    }
+  }
+  const value = await loader().catch(() => null);
+  if (value !== null && value !== undefined) {
+    ctx.waitUntil(putEntry(env, key, JSON.stringify(value), ttlSec));
+    return value;
+  }
+  if (entry && entry.expires_at > now - staleGraceSec) {
+    try {
+      return JSON.parse(entry.body);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function fetchTextUp(url, headers) {
+  const res = await fetch(url, { headers: { "user-agent": "ZeroLight-Cache/1.0", ...headers } });
+  if (!res.ok) return null;
+  return res.text();
+}
+
+async function fetchJsonUp(url, headers) {
+  const text = await fetchTextUp(url, headers);
+  if (text === null) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** Small quote-aware CSV parser (WQP and FIRMS both answer CSV). */
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else quoted = false;
+      } else field += c;
+    } else if (c === '"') {
+      quoted = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n") {
+      row.push(field);
+      field = "";
+      rows.push(row);
+      row = [];
+    } else if (c !== "\r") {
+      field += c;
+    }
+  }
+  if (field !== "" || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.length > 1 || (r.length === 1 && r[0] !== ""));
+}
+
+function aqiCategory(aqi) {
+  if (aqi <= 50) return "Good";
+  if (aqi <= 100) return "Moderate";
+  if (aqi <= 150) return "Unhealthy for sensitive groups";
+  if (aqi <= 200) return "Unhealthy";
+  if (aqi <= 300) return "Very unhealthy";
+  return "Hazardous";
+}
+
+function truthyFlag(v) {
+  return v === true || v === 1 || (typeof v === "string" && /^(y|yes|true|1)$/i.test(v.trim()));
+}
+
+// --- Air quality: AirNow when its key is set, else Open-Meteo's
+// modelled US AQI (same provider family as the weather). AirNow is
+// preliminary monitor data; Open-Meteo is a model estimate. The reply
+// names its source so the app can label it honestly.
+async function handleAir(request, env, ctx, url) {
+  const ll = parseLatLon(url);
+  if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
+  const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
+  const value = await cachedRaw(env, ctx, `air1:${cellLat}:${cellLon}`, 3600, 3600, async () => {
+    if (env.AIRNOW_API_KEY) {
+      const base = "https://www.airnowapi.org/aq";
+      const qs = `format=application/json&latitude=${cellLat}&longitude=${cellLon}&distance=25&API_KEY=${env.AIRNOW_API_KEY}`;
+      const [cur, fc] = await Promise.all([
+        fetchJsonUp(`${base}/observation/latLong/current/?${qs}`),
+        fetchJsonUp(`${base}/forecast/latLong/?${qs}`),
+      ]);
+      let current = null;
+      if (Array.isArray(cur)) {
+        for (const r of cur) {
+          const aqi = typeof r?.AQI === "number" ? r.AQI : NaN;
+          if (Number.isFinite(aqi) && aqi >= 0 && (!current || aqi > current.aqi)) {
+            current = { aqi, category: aqiCategory(aqi), area: String(r.ReportingArea ?? "").slice(0, 60) };
+          }
+        }
+      }
+      const byDate = new Map();
+      if (Array.isArray(fc)) {
+        for (const r of fc) {
+          const date = String(r?.DateForecast ?? "").trim().slice(0, 10);
+          const aqi = typeof r?.AQI === "number" ? r.AQI : NaN;
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(aqi) || aqi < 0) continue;
+          if (!byDate.has(date) || aqi > byDate.get(date)) byDate.set(date, aqi);
+        }
+      }
+      const daily = [...byDate.entries()]
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .slice(0, 5)
+        .map(([date, aqi]) => ({ date, aqi, category: aqiCategory(aqi) }));
+      if (current || daily.length) return { source: "airnow", current, daily };
+      // AirNow answered nothing usable — fall through to the model.
+    }
+    const j = await fetchJsonUp(
+      `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${cellLat}&longitude=${cellLon}` +
+        `&hourly=us_aqi&forecast_days=5&timezone=auto`,
+    );
+    const times = j?.hourly?.time;
+    const aqis = j?.hourly?.us_aqi;
+    if (!Array.isArray(times) || !Array.isArray(aqis)) return null;
+    const offsetSec = typeof j.utc_offset_seconds === "number" ? j.utc_offset_seconds : 0;
+    const locNow = new Date(Date.now() + offsetSec * 1000);
+    const pad = (n) => String(n).padStart(2, "0");
+    const nowHour =
+      `${locNow.getUTCFullYear()}-${pad(locNow.getUTCMonth() + 1)}-${pad(locNow.getUTCDate())}` +
+      `T${pad(locNow.getUTCHours())}:00`;
+    let current = null;
+    const byDate = new Map();
+    for (let i = 0; i < times.length; i++) {
+      const t = String(times[i]);
+      const v = aqis[i];
+      if (typeof v !== "number" || !Number.isFinite(v)) continue;
+      const date = t.slice(0, 10);
+      if (!byDate.has(date) || v > byDate.get(date)) byDate.set(date, v);
+      if (t === nowHour) current = { aqi: Math.round(v), category: aqiCategory(v), area: "" };
+    }
+    const daily = [...byDate.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .slice(0, 5)
+      .map(([date, aqi]) => ({ date, aqi: Math.round(aqi), category: aqiCategory(aqi) }));
+    if (!current && daily.length) {
+      const t = daily[0];
+      current = { aqi: t.aqi, category: t.category, area: "" };
+    }
+    return current || daily.length ? { source: "openmeteo", current, daily } : null;
+  });
+  if (value === null) return jsonResponse({ error: "upstream unavailable" }, 502);
+  return jsonResponse(value, 200);
+}
+
+// --- Freshwater blooms by satellite: EPA CyAN weekly cyanobacteria
+// index for the nearest resolvable lake pixel. A latest week older
+// than 21 days is reported as no current reading — CyAN's archive
+// holds years-old pixels and an old bloom is not a current one.
+async function handleCyan(request, env, ctx, url) {
+  const ll = parseLatLon(url);
+  if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
+  const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
+  const value = await cachedRaw(env, ctx, `cyan1:${cellLat}:${cellLon}`, 86400, 86400, async () => {
+    const j = await fetchJsonUp(`https://cyan.epa.gov/cyan/cyano/location/data/${cellLat}/${cellLon}`, {
+      accept: "application/json",
+    });
+    const out = Array.isArray(j?.output) ? j.output : [];
+    let latest = null;
+    for (const r of out) {
+      const ms = typeof r?.imageDateLong === "number" ? r.imageDateLong : NaN;
+      const cells = typeof r?.maxCellConcentration === "number" ? r.maxCellConcentration : NaN;
+      if (!Number.isFinite(ms) || !Number.isFinite(cells)) continue;
+      if (!latest || ms > latest.weekMs) latest = { weekMs: ms, cellsPerMl: Math.round(cells) };
+    }
+    if (latest && Date.now() - latest.weekMs > 21 * 86400_000) latest = null;
+    return { latest };
+  });
+  if (value === null) return jsonResponse({ error: "upstream unavailable" }, 502);
+  return jsonResponse(value, 200);
+}
+
+// --- Spills and sewage: Florida's Public Notice of Pollution
+// (ArcGIS, last-30-days layer) and Alabama's ADEM sewer-overflow
+// reports (ArcGIS). Both are official report feeds posted within
+// about a day of the event. A notice counts while it is ongoing or
+// began within the last 14 days.
+const SPILL_WINDOW_MS = 14 * 86400_000;
+
+async function esriPointQuery(base, lat, lon, fields, where) {
+  const qs =
+    `geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326` +
+    `&spatialRel=esriSpatialRelIntersects&distance=25000&units=esriSRUnit_Meter` +
+    `&outFields=${encodeURIComponent(fields)}&returnGeometry=false&f=json` +
+    (where ? `&where=${encodeURIComponent(where)}` : "");
+  const j = await fetchJsonUp(`${base}?${qs}`);
+  return Array.isArray(j?.features) ? j.features : null;
+}
+
+async function handleSpill(request, env, ctx, url) {
+  const ll = parseLatLon(url);
+  if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
+  const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
+  const clat = parseFloat(cellLat);
+  const clon = parseFloat(cellLon);
+  const inFl = clat >= 24 && clat <= 31.5 && clon >= -88.5 && clon <= -79.5;
+  const inAl = clat >= 30.8 && clat <= 35.1 && clon >= -88.6 && clon <= -84.8;
+  const value = await cachedRaw(env, ctx, `spill1:${cellLat}:${cellLon}`, 3600, 6 * 3600, async () => {
+    const notices = [];
+    const covered = inFl || inAl;
+    const now = Date.now();
+    if (inFl) {
+      const feats = await esriPointQuery(
+        "https://ags.dep.state.fl.us/arcgis/rest/services/External_Services/PNP/FeatureServer/0/query",
+        clat,
+        clon,
+        "INCIDENT_NAME,INCIDENT_REPORT,DATE_TIME_OF_REPORT,RELEASE_START_DATE_TIME,RELEASE_ONGOING,FACILITY_NAME,LATITUDE,LONGITUDE",
+        null,
+      );
+      if (feats === null) return null;
+      for (const f of feats) {
+        const a = f?.attributes ?? {};
+        const lat = typeof a.LATITUDE === "number" ? a.LATITUDE : NaN;
+        const lon = typeof a.LONGITUDE === "number" ? a.LONGITUDE : NaN;
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        const started =
+          typeof a.RELEASE_START_DATE_TIME === "number"
+            ? a.RELEASE_START_DATE_TIME
+            : typeof a.DATE_TIME_OF_REPORT === "number"
+              ? a.DATE_TIME_OF_REPORT
+              : NaN;
+        const ongoing = truthyFlag(a.RELEASE_ONGOING);
+        if (!ongoing && (!Number.isFinite(started) || now - started > SPILL_WINDOW_MS)) continue;
+        const text = `${a.INCIDENT_NAME ?? ""} ${a.INCIDENT_REPORT ?? ""}`;
+        notices.push({
+          kind: /sewage|wastewater|sanitary|untreated|bypass|\bsso\b/i.test(text) ? "sewage" : "spill",
+          title: String(a.INCIDENT_NAME || a.FACILITY_NAME || "Pollution notice").slice(0, 120),
+          facility: String(a.FACILITY_NAME ?? "").slice(0, 120),
+          startedMs: Number.isFinite(started) ? started : null,
+          ongoing,
+          lat,
+          lon,
+          source: "FL pollution notices",
+        });
+      }
+    } else if (inAl) {
+      const since = new Date(now - 30 * 86400_000);
+      const pad = (n) => String(n).padStart(2, "0");
+      const stamp =
+        `${since.getUTCFullYear()}-${pad(since.getUTCMonth() + 1)}-${pad(since.getUTCDate())} ` +
+        `${pad(since.getUTCHours())}:${pad(since.getUTCMinutes())}:${pad(since.getUTCSeconds())}`;
+      const feats = await esriPointQuery(
+        "https://gis.adem.alabama.gov/arcgis/rest/services/SSO_all_Dates_project/MapServer/0/query",
+        clat,
+        clon,
+        "permittee,facility_site,date_sso_began,date_sso_stopped,sso_ongoing_ind,est_volume,location_of_discharge,receiving_stream,LATTITUDE_DECIMAL,LONGITUDE_DECIMAL",
+        `date_sso_began >= TIMESTAMP '${stamp}'`,
+      );
+      if (feats === null) return null;
+      for (const f of feats) {
+        const a = f?.attributes ?? {};
+        const lat = typeof a.LATTITUDE_DECIMAL === "number" ? a.LATTITUDE_DECIMAL : NaN;
+        const lon = typeof a.LONGITUDE_DECIMAL === "number" ? a.LONGITUDE_DECIMAL : NaN;
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        const started = typeof a.date_sso_began === "number" ? a.date_sso_began : NaN;
+        const ongoing = truthyFlag(a.sso_ongoing_ind) || a.date_sso_stopped == null;
+        if (!ongoing && (!Number.isFinite(started) || now - started > SPILL_WINDOW_MS)) continue;
+        notices.push({
+          kind: "sewage",
+          title: String(a.receiving_stream || a.location_of_discharge || "Sewer overflow").slice(0, 120),
+          facility: String(a.permittee ?? "").slice(0, 120),
+          startedMs: Number.isFinite(started) ? started : null,
+          ongoing,
+          lat,
+          lon,
+          source: "AL sewer overflows",
+        });
+      }
+    }
+    return { notices, covered };
+  });
+  if (value === null) return jsonResponse({ error: "upstream unavailable" }, 502);
+  return jsonResponse(value, 200);
+}
+
+// --- Florida's own bloom sampling (FDEP): ground-truth site visits
+// with lab results — dominant taxon and whether toxin was found.
+// Samples from the last 21 days within the query radius.
+async function handleHabState(request, env, ctx, url) {
+  const ll = parseLatLon(url);
+  if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
+  const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
+  const clat = parseFloat(cellLat);
+  const clon = parseFloat(cellLon);
+  const inFl = clat >= 24 && clat <= 31.5 && clon >= -88.5 && clon <= -79.5;
+  if (!inFl) return jsonResponse({ samples: [] }, 200);
+  const value = await cachedRaw(env, ctx, `habs1:${cellLat}:${cellLon}`, 6 * 3600, 6 * 3600, async () => {
+    const since = new Date(Date.now() - 21 * 86400_000);
+    const pad = (n) => String(n).padStart(2, "0");
+    const stamp =
+      `${since.getUTCFullYear()}-${pad(since.getUTCMonth() + 1)}-${pad(since.getUTCDate())} 00:00:00`;
+    const qs =
+      `geometry=${clon},${clat}&geometryType=esriGeometryPoint&inSR=4326` +
+      `&spatialRel=esriSpatialRelIntersects&distance=25000&units=esriSRUnit_Meter` +
+      `&outFields=${encodeURIComponent("SampleDateTime,BloomObserved,ToxinPresent,Microcystin,OtherToxin,AlgalIDResult,CyanobacteriaDominant,locationString")}` +
+      `&returnGeometry=true&f=json&where=${encodeURIComponent(`SampleDateTime >= TIMESTAMP '${stamp}'`)}`;
+    const j = await fetchJsonUp(
+      `https://services1.arcgis.com/nRHtyn3uE1kyzoYc/arcgis/rest/services/AlgalBloom_Final_View/FeatureServer/0/query?${qs}`,
+    );
+    if (!Array.isArray(j?.features)) return null;
+    const samples = [];
+    for (const f of j.features) {
+      const a = f?.attributes ?? {};
+      const gx = f?.geometry?.x;
+      const gy = f?.geometry?.y;
+      if (typeof gx !== "number" || typeof gy !== "number") continue;
+      samples.push({
+        site: String(a.locationString ?? "Sampling site").slice(0, 120),
+        dateMs: typeof a.SampleDateTime === "number" ? a.SampleDateTime : null,
+        bloom: truthyFlag(a.BloomObserved),
+        toxin: truthyFlag(a.ToxinPresent),
+        toxinText: String(a.Microcystin || a.OtherToxin || "").slice(0, 80),
+        taxon: String(a.AlgalIDResult || a.CyanobacteriaDominant || "").slice(0, 120),
+        lat: gy,
+        lon: gx,
+      });
+    }
+    return { samples };
+  });
+  if (value === null) return jsonResponse({ error: "upstream unavailable" }, 502);
+  return jsonResponse(value, 200);
+}
+
+// --- Bacteria samples: the Water Quality Portal (WQX 3.0 services).
+// Lab grab samples posted by 1,500+ agencies — days to weeks old, so
+// this is a caution-grade signal, never a same-day advisory. The
+// Worker fetches the CSV (the Result service has no JSON profile),
+// keeps the latest sample per station for each of the two indicator
+// bacteria, and returns values raw; thresholds live in the app.
+async function wqpLatest(characteristic, clat, clon) {
+  const since = new Date(Date.now() - 21 * 86400_000);
+  const pad = (n) => String(n).padStart(2, "0");
+  const startLo = `${pad(since.getUTCMonth() + 1)}-${pad(since.getUTCDate())}-${since.getUTCFullYear()}`;
+  const text = await fetchTextUp(
+    `https://www.waterqualitydata.us/wqx3/Result/search?mimeType=csv&zip=no&dataProfile=narrow` +
+      `&lat=${clat}&long=${clon}&within=16&characteristicName=${encodeURIComponent(characteristic)}` +
+      `&startDateLo=${startLo}`,
+  );
+  if (text === null || !text.startsWith("Org_")) return null;
+  const rows = parseCsv(text);
+  if (rows.length < 2) return [];
+  const head = rows[0];
+  const ix = (name) => head.indexOf(name);
+  const iId = ix("Location_Identifier");
+  const iName = ix("Location_Name");
+  const iLat = ix("Location_Latitude");
+  const iLon = ix("Location_Longitude");
+  const iDate = ix("Activity_StartDate");
+  const iVal = ix("Result_Measure");
+  const iUnit = ix("Result_MeasureUnit");
+  const iOrg = ix("Org_FormalName");
+  const iDet = ix("Result_ResultDetectionCondition");
+  if ([iId, iLat, iLon, iDate, iVal].some((i) => i < 0)) return null;
+  const byStation = new Map();
+  for (const r of rows.slice(1)) {
+    if (iDet >= 0 && String(r[iDet] ?? "").trim()) continue; // non-detects carry limit values
+    const value = parseFloat(String(r[iVal] ?? ""));
+    const lat = parseFloat(String(r[iLat] ?? ""));
+    const lon = parseFloat(String(r[iLon] ?? ""));
+    const date = String(r[iDate] ?? "");
+    const unit = String(r[iUnit] ?? "");
+    if (!Number.isFinite(value) || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    if (!/^\d{4}-\d{2}-\d{2}/.test(date)) continue;
+    if (!/(100\s*ml|cfu|mpn)/i.test(unit)) continue;
+    const id = String(r[iId] ?? "");
+    if (!id) continue;
+    const prev = byStation.get(id);
+    if (!prev || date > prev.date) {
+      byStation.set(id, {
+        stationId: id.slice(0, 60),
+        stationName: String(r[iName] ?? id).slice(0, 120),
+        org: iOrg >= 0 ? String(r[iOrg] ?? "").slice(0, 80) : "",
+        lat,
+        lon,
+        date,
+        value,
+        unit: unit.slice(0, 20),
+      });
+    }
+  }
+  return [...byStation.values()];
+}
+
+async function handleWqp(request, env, ctx, url) {
+  const ll = parseLatLon(url);
+  if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
+  const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
+  const value = await cachedRaw(env, ctx, `wqp1:${cellLat}:${cellLon}`, 86400, 86400, async () => {
+    const [entero, ecoli] = await Promise.all([
+      wqpLatest("Enterococcus", cellLat, cellLon),
+      wqpLatest("Escherichia coli", cellLat, cellLon),
+    ]);
+    if (entero === null || ecoli === null) return null;
+    return { entero, ecoli };
+  });
+  if (value === null) return jsonResponse({ error: "upstream unavailable" }, 502);
+  return jsonResponse(value, 200);
+}
+
+// --- Active fires: NASA FIRMS VIIRS detections (needs the MAP_KEY
+// secret; without it the route answers 503 and the app shows the
+// family as not set up). Detections from the last 3 days in a
+// ±0.4° box; the app measures exact distances.
+async function handleFirms(request, env, ctx, url) {
+  if (!env.FIRMS_MAP_KEY) return jsonResponse({ error: "fires not configured" }, 503);
+  const ll = parseLatLon(url);
+  if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
+  const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
+  const clat = parseFloat(cellLat);
+  const clon = parseFloat(cellLon);
+  const value = await cachedRaw(env, ctx, `firms1:${cellLat}:${cellLon}`, 3 * 3600, 3 * 3600, async () => {
+    const box = `${clon - 0.4},${clat - 0.4},${clon + 0.4},${clat + 0.4}`;
+    const text = await fetchTextUp(
+      `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${env.FIRMS_MAP_KEY}/VIIRS_SNPP_NRT/${box}/3`,
+    );
+    if (text === null || !text.startsWith("latitude")) return null;
+    const rows = parseCsv(text);
+    const detections = [];
+    for (const r of rows.slice(1)) {
+      const lat = parseFloat(r[0]);
+      const lon = parseFloat(r[1]);
+      const date = String(r[6] ?? "");
+      const time = String(r[7] ?? "").padStart(4, "0");
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const atMs = Date.parse(`${date}T${time.slice(0, 2)}:${time.slice(2, 4)}:00Z`);
+      detections.push({
+        lat,
+        lon,
+        atMs: Number.isFinite(atMs) ? atMs : null,
+        confidence: String(r[9] ?? "").slice(0, 4),
+      });
+      if (detections.length >= 300) break;
+    }
+    return { detections };
+  });
+  if (value === null) return jsonResponse({ error: "upstream unavailable" }, 502);
+  return jsonResponse(value, 200);
+}
+
+// --- Florida shellfish harvest areas (FDACS): daily open/closed
+// status published as one HTML page per coast region. The Worker
+// reads the region's page and walks its status tables cell by cell
+// (the pages are Word-generated HTML; the table cells survive tag
+// stripping in reading order). Only the parsed status is returned.
+function fdacsRegion(lat, lon) {
+  if (lon > -80.9) return "atlantic";
+  if (lon <= -85.4) return "westgulf";
+  if (lon <= -84.0) return "centralgulf";
+  if (lon <= -82.75) return "bigbendgulf";
+  return "southgulf";
+}
+
+async function handleShellfish(request, env, ctx, url) {
+  const ll = parseLatLon(url);
+  if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
+  const inFl = ll.lat >= 24 && ll.lat <= 31.5 && ll.lon >= -88.5 && ll.lon <= -79.5;
+  if (!inFl) return jsonResponse({ region: null, areas: [] }, 200);
+  const region = fdacsRegion(ll.lat, ll.lon);
+  const value = await cachedRaw(env, ctx, `shell1:${region}`, 6 * 3600, 6 * 3600, async () => {
+    const html = await fetchTextUp(`https://shellfish.fdacs.gov/seas/seas_${region}.htm`);
+    if (html === null) return null;
+    const text = html.replace(/\s+/g, " ");
+    const pub = /published at ([^,]+,\s*\d{4})/i.exec(text);
+    const cells = html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<[^>]+>/g, "|")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .split("|")
+      .map((c) => c.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    const areas = [];
+    let system = "";
+    let cur = null;
+    const flush = () => {
+      if (cur && cur.status) areas.push(cur);
+      cur = null;
+    };
+    for (const cell of cells) {
+      if (/SHA\s*#?\s*\d+/i.test(cell) && cell.length < 80) {
+        flush();
+        system = cell.slice(0, 80);
+        continue;
+      }
+      const m = /^(\d{4})\s+(.+)$/.exec(cell);
+      if (m) {
+        flush();
+        cur = { num: m[1], name: m[2].slice(0, 80), system, status: null, date: "", reason: "" };
+        continue;
+      }
+      if (!cur) continue;
+      if (cell === "OPEN" || cell === "CLOSED") {
+        if (cell === "CLOSED" || !cur.status) cur.status = cell;
+        continue;
+      }
+      if (cur.status && !cur.date && /^\d{2}\/\d{2}\/\d{4}$/.test(cell)) {
+        cur.date = cell;
+        continue;
+      }
+      if (cur.status && cur.date && cur.reason.length < 110) {
+        if (!/^(approved|conditionally|prohibited|public reefs|leases|status|date|reason)/i.test(cell)) {
+          cur.reason = `${cur.reason} ${cell}`.trim().slice(0, 120);
+        }
+      }
+    }
+    flush();
+    if (!areas.length) return null;
+    return { region, published: pub ? pub[1] : "", areas };
+  });
+  if (value === null) return jsonResponse({ error: "upstream unavailable" }, 502);
+  return jsonResponse(value, 200);
+}
+
 // ------------------------------------------------------------- router
 //
 // How one request flows through this Worker, in plain words:
@@ -483,6 +1032,20 @@ export default {
         return handleUsgs(request, env, ctx, url);
       case "/normals":
         return handleNormals(request, env, ctx, url);
+      case "/air":
+        return handleAir(request, env, ctx, url);
+      case "/cyan":
+        return handleCyan(request, env, ctx, url);
+      case "/spill":
+        return handleSpill(request, env, ctx, url);
+      case "/habstate":
+        return handleHabState(request, env, ctx, url);
+      case "/wqp":
+        return handleWqp(request, env, ctx, url);
+      case "/firms":
+        return handleFirms(request, env, ctx, url);
+      case "/shellfish":
+        return handleShellfish(request, env, ctx, url);
       default:
         return jsonResponse({ error: "not found" }, 404);
     }

@@ -172,6 +172,10 @@ export interface DayPlan {
    *  for the #28 hour-by-hour strip; no scoring change). Empty on veto days
    *  is NOT implied — hours are still listed; display code decides. */
   hourlyScores: { time: Date; score: number }[];
+  /** Item #69: true when an environmental caution (banner phrase or
+   *  the AQI score modifier) fed this plan — drives the amber dot on
+   *  Trends day cells. Veto days are read off `veto` as before. */
+  envCaution: boolean;
 }
 
 export function labelForScore(score: number): "Best" | "Good" | "Okay" | null {
@@ -489,6 +493,16 @@ export interface DayInputs {
    *  frame so anchors and displayed times agree in the location's
    *  timezone rather than the device's. */
   tzOffsetSec?: number;
+  /** Item #69: an environmental veto (sewage spill, algal toxin,
+   *  advisory-level beach bacteria). Applies only when no stronger
+   *  veto (the caller's `veto`, e.g. red tide) is already set. */
+  envVeto?: string | null;
+  /** Item #69: environmental caution phrases, merged into the
+   *  held-back line ahead of the weather reasons. */
+  envCautions?: string[];
+  /** Item #69: flat adjustment applied to every hour's score before
+   *  slots are built (the AQI ≥151 rule: −10). */
+  envScoreModifier?: number;
 }
 
 /** Build one day's plan: ranked slots + verdict, per spec §5. */
@@ -519,9 +533,15 @@ export function generateDayPlan(input: DayInputs): DayPlan {
 
   const maxWind = Math.max(...hours.map((h) => h.windMph));
   let veto = input.veto ?? null;
+  if (!veto) veto = input.envVeto ?? null;
   if (!veto && maxWind >= 32) veto = `dangerous wind (${Math.round(maxWind)} mph)`;
 
   const scored = hours.map((h) => scoreHour(target, h, dq, astro, input.tides));
+  // #69: the AQI modifier shifts every hour before slots are built,
+  // so slot scores, labels and the day score all move together.
+  if (input.envScoreModifier) {
+    for (const s of scored) s.score = clamp(s.score + input.envScoreModifier, 0, 100);
+  }
   const dayScore = scored.length ? Math.max(...scored.map((s) => s.score)) : dq * 2;
   const verdict: DayPlan["verdict"] = veto
     ? "Poor"
@@ -606,18 +626,24 @@ export function generateDayPlan(input: DayInputs): DayPlan {
   }
 
   const { major } = solunarPeriods(astro);
+  // #69: environmental cautions lead the held-back line (they are the
+  // health-relevant reasons), weather reasons follow after "also".
+  const weatherHeldBack = heldBackBy(target, hours, dq);
+  const envCautions = input.envCautions ?? [];
+  const heldBackParts = [...envCautions, ...(weatherHeldBack ? [weatherHeldBack] : [])];
   return {
     dateKey: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`,
     dayQuality: dq,
     dayScore: veto ? Math.min(dayScore, 20) : dayScore,
     verdict,
-    heldBackBy: veto ? veto : heldBackBy(target, hours, dq),
+    heldBackBy: veto ? veto : heldBackParts.length ? heldBackParts.join("; also ") : null,
     slots,
     veto,
     astro,
     typical,
     solunarMajor: major,
     hourlyScores: scored.map((s) => ({ time: s.time, score: s.score })),
+    envCaution: !veto && (envCautions.length > 0 || !!input.envScoreModifier),
   };
 }
 

@@ -199,5 +199,72 @@ check(
   catBest ? `best @${catBest.start.getHours()}:00 score ${catBest.score}` : "no slots",
 );
 
+// --- #69: environmental inputs ----------------------------------------------
+// An env veto behaves like any veto (slots emptied, day capped, Poor),
+// and the caller's own veto (red tide) outranks it.
+const envVetoPlan = S.generateDayPlan({
+  date: tampaDay,
+  lat: 27.9506,
+  lon: -82.4572,
+  target: redfish,
+  hours: hoursFor(tampaDay, {}),
+  tides: sineTides(tampaDay),
+  envVeto: "sewage spill reported — Hillsborough River, 2 km away",
+});
+check("#69 env veto empties slots", envVetoPlan.slots.length === 0);
+check("#69 env veto caps day at 20 / Poor", envVetoPlan.dayScore <= 20 && envVetoPlan.verdict === "Poor");
+check("#69 env veto is the plan's veto", (envVetoPlan.veto ?? "").includes("sewage spill"));
+check("#69 env veto day is not flagged a mere caution", envVetoPlan.envCaution === false);
+const bothVetoPlan = S.generateDayPlan({
+  date: tampaDay,
+  lat: 27.9506,
+  lon: -82.4572,
+  target: redfish,
+  hours: hoursFor(tampaDay, {}),
+  tides: sineTides(tampaDay),
+  veto: "red tide (high) reported nearby",
+  envVeto: "sewage spill reported — Hillsborough River, 2 km away",
+});
+check("#69 caller veto outranks env veto", bothVetoPlan.veto === "red tide (high) reported nearby");
+
+// The AQI modifier shifts every hour (and so the day score) by exactly
+// the modifier; a caution alone changes words, not numbers.
+const basePlan = S.generateDayPlan({
+  date: tampaDay,
+  lat: 27.9506,
+  lon: -82.4572,
+  target: redfish,
+  hours: hoursFor(tampaDay, { temp: 76, wind: 8 }),
+  tides: sineTides(tampaDay),
+});
+const modPlan = S.generateDayPlan({
+  date: tampaDay,
+  lat: 27.9506,
+  lon: -82.4572,
+  target: redfish,
+  hours: hoursFor(tampaDay, { temp: 76, wind: 8 }),
+  tides: sineTides(tampaDay),
+  envScoreModifier: -10,
+});
+check("#69 modifier shifts the day score by exactly 10", modPlan.dayScore === basePlan.dayScore - 10, `${basePlan.dayScore} -> ${modPlan.dayScore}`);
+check(
+  "#69 modifier shifts every hour by 10",
+  modPlan.hourlyScores.every((h, i) => h.score === Math.max(0, basePlan.hourlyScores[i].score - 10)),
+);
+check("#69 modifier alone flags envCaution", modPlan.envCaution === true);
+const cautionPlan = S.generateDayPlan({
+  date: tampaDay,
+  lat: 27.9506,
+  lon: -82.4572,
+  target: redfish,
+  hours: hoursFor(tampaDay, { temp: 76, wind: 8 }),
+  tides: sineTides(tampaDay),
+  envCautions: ["algal bloom sampled at Lake X (Nov 20)"],
+});
+check("#69 caution leads the held-back line", (cautionPlan.heldBackBy ?? "").startsWith("algal bloom sampled at Lake X"), cautionPlan.heldBackBy ?? "null");
+check("#69 caution flags envCaution", cautionPlan.envCaution === true);
+check("#69 caution does not change the score", cautionPlan.dayScore === basePlan.dayScore);
+check("#69 a plain plan has envCaution false", basePlan.envCaution === false);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL SMOKE CHECKS PASSED");
 process.exit(failures ? 1 : 0);

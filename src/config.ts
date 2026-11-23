@@ -23,7 +23,52 @@ const KEYS = {
   includeDontGo: "zl_export_dontgo",
   theme: "zl_theme",
   targets: "zl_enabled_targets",
+  envData: "zl_env_data",
 } as const;
+
+/** Item #69: the environmental data families the user can switch off
+ *  in Settings. Every family defaults ON (Wade, 2026-11-23); only an
+ *  explicit stored `false` turns one off. Red tide and dangerous wind
+ *  are NOT in this list — those vetoes are always on. */
+export type EnvFamilyId =
+  | "air"
+  | "spill"
+  | "beach"
+  | "bloom"
+  | "bacteria"
+  | "fires"
+  | "shellfish";
+
+export const ENV_FAMILY_IDS: readonly EnvFamilyId[] = [
+  "air",
+  "spill",
+  "beach",
+  "bloom",
+  "bacteria",
+  "fires",
+  "shellfish",
+];
+
+export type EnvSettings = Record<EnvFamilyId, boolean>;
+
+function loadEnvSettings(): EnvSettings {
+  const out = {} as EnvSettings;
+  let parsed: unknown = null;
+  try {
+    const raw = get(KEYS.envData);
+    parsed = raw ? JSON.parse(raw) : null;
+  } catch {
+    parsed = null;
+  }
+  const obj =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  // Re-validated on load like every persisted value: unknown keys are
+  // ignored and anything but an explicit false reads as ON.
+  for (const id of ENV_FAMILY_IDS) out[id] = obj[id] !== false;
+  return out;
+}
 
 /** Item #63: the targets shown in the dropdown on a fresh install (and
  *  the "Reset to defaults" set) — 10 of the 25-target catalog, chosen by
@@ -58,6 +103,10 @@ export interface AppSettings {
   /** Item #63: ids of the targets shown in the target dropdown, in
    *  catalog order. Always at least one; validated on load. */
   targets: string[];
+  /** Item #69: which environmental data families feed the ratings.
+   *  All default ON; a family switched off is removed from ratings,
+   *  banners, trend dots and the day-detail conditions block. */
+  env: EnvSettings;
 }
 
 function get(k: string): string {
@@ -135,6 +184,7 @@ export function loadSettings(): AppSettings {
       ? (rawTheme as ThemePref)
       : "device",
     targets: loadEnabledTargets(),
+    env: loadEnvSettings(),
   };
 }
 
@@ -149,11 +199,13 @@ export function saveSettings(s: AppSettings): boolean {
   set(KEYS.includeDontGo, s.includeDontGo ? "1" : "");
   set(KEYS.theme, s.theme);
   set(KEYS.targets, JSON.stringify(s.targets));
+  set(KEYS.envData, JSON.stringify(s.env));
   return (
     get(KEYS.includeTypical) === (s.includeTypical ? "1" : "") &&
     get(KEYS.includeDontGo) === (s.includeDontGo ? "1" : "") &&
     get(KEYS.theme) === s.theme &&
-    get(KEYS.targets) === JSON.stringify(s.targets)
+    get(KEYS.targets) === JSON.stringify(s.targets) &&
+    get(KEYS.envData) === JSON.stringify(s.env)
   );
 }
 

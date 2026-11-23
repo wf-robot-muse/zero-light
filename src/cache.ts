@@ -21,6 +21,16 @@ export const TTL = {
   habMs: 6 * 3600_000, // red tide samples (source updates daily)
   normalsMs: 30 * 86400_000, // climate normals are effectively static
   geocodeMs: 30 * 86400_000,
+  // Item #69 environmental families — these mirror the Layer 2 aging
+  // ladder (worker/worker.js): air and spill notices move fastest,
+  // satellite blooms and lab samples are slow by nature.
+  envAirMs: 3600_000, // air quality: hourly
+  envSpillMs: 3600_000, // spill / sewage notices: hourly
+  envCyanMs: 86400_000, // satellite bloom index: weekly data, daily check
+  envHabStateMs: 6 * 3600_000, // FL DEP bloom samples
+  envWqpMs: 86400_000, // bacteria lab samples: posted days late anyway
+  envFirmsMs: 3 * 3600_000, // active-fire detections
+  envShellfishMs: 6 * 3600_000, // FDACS daily status pages
 } as const;
 
 interface Entry {

@@ -233,6 +233,24 @@
               </div>
             </div>
           </section>
+          <!-- #69: per-family environmental data toggles. All default
+               on; only an explicit off is stored. Red tide and
+               dangerous-wind vetoes are always on and not listed. -->
+          <section class="acc-section" data-acc="env">
+            <button type="button" class="acc-head" data-acc-head="env" aria-expanded="false">
+              <span>Environmental data</span><span class="acc-sum" id="acc-sum-env"></span>
+            </button>
+            <div class="acc-body" data-acc-body="env" hidden>
+              <label class="check"><input id="env-air" type="checkbox" /> Air quality — cautions at AQI 101+, lower scores at 151+</label>
+              <label class="check"><input id="env-spill" type="checkbox" /> Spills &amp; sewage — official notices (FL, AL); a nearby spill stops the day</label>
+              <label class="check"><input id="env-beach" type="checkbox" /> Beach bacteria — advisory-level samples near a beach stop saltwater days</label>
+              <label class="check"><input id="env-bloom" type="checkbox" /> Algal blooms — satellite lake blooms and Florida sample results</label>
+              <label class="check"><input id="env-bacteria" type="checkbox" /> Bacteria samples — recent high E. coli samples in rivers and lakes</label>
+              <label class="check"><input id="env-fires" type="checkbox" /> Active fires — satellite fire detections near your spot</label>
+              <label class="check"><input id="env-shellfish" type="checkbox" /> Shellfish areas — Florida harvest-area closures</label>
+              <p class="note">Red tide and dangerous-wind vetoes are always on and aren't listed here.</p>
+            </div>
+          </section>
         </div>
         <div class="settings-foot">
           <button id="save-settings" type="button">Save settings</button>

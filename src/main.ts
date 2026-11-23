@@ -68,10 +68,18 @@ import {
   markNudgeSeen,
   CACHE_ENDPOINT,
   DEFAULT_TARGET_IDS,
+  ENV_FAMILY_IDS,
   type AppSettings,
   type ThemePref,
   type BaseMapId,
+  type EnvFamilyId,
 } from "./config";
+import {
+  fetchEnvAssessment,
+  aqiEffectForDay,
+  type EnvAssessment,
+  type EnvSignal,
+} from "./env";
 // #29/#30 logo masters (assets/logo/). The full lockup ships in two
 // colorways and swaps with the theme; it is the header brand (#30) and
 // tops the About modal. The square mark remains the app icon / favicon.
@@ -186,6 +194,11 @@ const state = {
   tideStationName: "",
   usgs: undefined as UsgsReading | undefined,
   habVeto: null as string | null,
+  // #69: the environmental assessment for the current place (air,
+  // spills, beach bacteria, blooms, bacteria samples, fires,
+  // shellfish). null until the first fetch lands; plans built before
+  // it arrives simply carry no environmental input.
+  env: null as EnvAssessment | null,
   normals: undefined as Map<string, number> | undefined,
   extrasFor: "",
   loading: false,
@@ -302,6 +315,13 @@ async function ensureData(force = false): Promise<void> {
     (async () => {
       state.normals = await fetchNormals(lat, lon);
     })(),
+    // #69: environmental data, one assessment per place. Best-effort
+    // like every other secondary source — a failure leaves the last
+    // assessment (or null) and plans just carry no env input.
+    (async () => {
+      const a = await fetchEnvAssessment(lat, lon, state.settings.env, state.place?.label ?? "", force);
+      if (state.place && `${state.place.lat},${state.place.lon}` === key) state.env = a;
+    })(),
   );
   await Promise.all(jobs);
 
@@ -343,6 +363,25 @@ function planForKey(key: string): DayPlan {
   const hours = state.weather?.days.get(key) ?? [];
   const isToday = key === startKey();
   const rut = target.id === "whitetail" ? rutForLocation(lat, lon, date) : undefined;
+  // #69: environmental inputs. Current-condition vetoes and cautions
+  // describe the water and land as they are now, so they apply to
+  // today only; the AQI table carries a forecast, so its caution and
+  // score modifier apply to any day it covers.
+  let envVeto: string | null = null;
+  const envCautions: string[] = [];
+  let envScoreModifier = 0;
+  if (state.env) {
+    if (isToday) {
+      const v = state.env.vetoes.find((x) => x.kinds.includes(target.kind));
+      envVeto = v ? v.text : null;
+      for (const c of state.env.cautions) {
+        if (c.kinds.includes(target.kind)) envCautions.push(c.text);
+      }
+    }
+    const fx = aqiEffectForDay(state.env.aqiByDay, key, isToday);
+    if (fx.caution) envCautions.push(fx.caution);
+    envScoreModifier = fx.modifier;
+  }
   const plan = generateDayPlan({
     date,
     lat,
@@ -351,6 +390,9 @@ function planForKey(key: string): DayPlan {
     hours,
     tides: tidesForDay(state.tides, date),
     veto: target.kind === "saltwater" ? state.habVeto : null,
+    envVeto,
+    envCautions,
+    envScoreModifier,
     waterTempF: isToday && target.kind !== "hunting" ? state.usgs?.waterTempF : undefined,
     rutPeak: !!rut,
     typicalMeanF: hours.length ? undefined : state.normals?.get(key.slice(5)),
@@ -890,6 +932,10 @@ function renderTrends(): void {
   const start = startKey();
   const blocks: string[] = [];
   const weekPlans: { key: string; plan: DayPlan }[] = [];
+  // #69: day-cell dots — red on a veto day, amber on an environmental
+  // caution day; the legend prints only when a dot exists in range.
+  let anyVetoDot = false;
+  let anyCautionDot = false;
   for (const [label, days] of [["Week", 7], ["Month", 30]] as const) {
     const cells: string[] = [];
     for (let i = 0; i < days; i++) {
@@ -899,16 +945,26 @@ function renderTrends(): void {
       const band = plan.veto ? "Veto" : dayBand(plan.dayScore);
       const kind = plan.typical ? "typical" : "forecast";
       const date = parseDateKey(key);
+      const dot = plan.veto
+        ? ((anyVetoDot = true), '<span class="env-dot veto"></span>')
+        : plan.envCaution
+          ? ((anyCautionDot = true), '<span class="env-dot caution"></span>')
+          : "";
       cells.push(
         `<div class="day-block band-${band.toLowerCase()} ${kind}" data-key="${key}" tabindex="0" role="button" aria-label="${key} detail">
            <span class="db-dow">${"SMTWTFS"[date.getDay()]}</span>
            <span class="db-num">${date.getDate()}</span>
            <span class="db-band">${esc(band === "Veto" ? "Don't go" : band)}</span>
+           ${dot}
          </div>`,
       );
     }
     blocks.push(`<h3>${label} — ${esc(target.name)}</h3><div class="strip">${cells.join("")}</div>`);
   }
+  const envLegend =
+    anyVetoDot || anyCautionDot
+      ? `<p class="note legend">Dots: <span class="env-dot veto"></span> Don't go day · <span class="env-dot caution"></span> environmental caution — open the day for details.</p>`
+      : "";
   const best = [...weekPlans]
     .filter((p) => !p.plan.veto)
     .sort((a, b) => b.plan.dayScore - a.plan.dayScore)
@@ -928,6 +984,7 @@ function renderTrends(): void {
         <button type="button" id="badge-week">Week badge</button>
       </div>
       ${blocks.join("")}
+      ${envLegend}
       ${chips}
       <p class="note legend">Day bands, from the day's best hour: <strong>Excellent</strong> 78+ ·
       <strong>Good</strong> 62+ · <strong>Fair</strong> 48+ · <strong>Poor</strong> under 48 ·
@@ -1038,6 +1095,81 @@ function render(): void {
 
 // ------------------------------------------------------------- day modal
 
+/** #69 (layout E1, Wade's pick): the day detail's "Water & air" block.
+ *  Collapsed by default — the header row carries the worst status, so
+ *  no warning is ever hidden — and tapping it expands the full
+ *  per-signal list in place, flagged rows first. Today's detail only:
+ *  the signals are current conditions, not a forecast. The veto and
+ *  banner lines live above the block as before; this block is the
+ *  detail and the sources behind them. */
+function envBlockHtml(): string {
+  const env = state.env;
+  if (!env || !state.place) return "";
+  const rows: EnvSignal[] = [...env.signals];
+  // Red tide and the USGS gauge are fetched outside env.ts; splice
+  // their rows in here, in the Sheet D order (red tide after beach
+  // bacteria, gauge after shellfish).
+  const { lat, lon } = state.place;
+  if (lat >= 24 && lat <= 31.5 && lon >= -88.5 && lon <= -79.5) {
+    const rt: EnvSignal = state.habVeto
+      ? { id: "redtide", label: "Red tide", status: "veto", text: state.habVeto, source: "FWC-FWRI" }
+      : { id: "redtide", label: "Red tide", status: "ok", text: "No red tide detected in recent samples nearby.", source: "FWC-FWRI" };
+    const at = rows.findIndex((r) => r.id === "bloom");
+    rows.splice(at === -1 ? rows.length : at, 0, rt);
+  }
+  if (state.usgs) {
+    const u = state.usgs;
+    const bits: string[] = [];
+    if (typeof u.waterTempF === "number") bits.push(`water ${Math.round(u.waterTempF)}°F`);
+    if (typeof u.dischargeCfs === "number") bits.push(`flow ${Math.round(u.dischargeCfs).toLocaleString()} cfs`);
+    if (typeof u.turbidity === "number") bits.push(`turbidity ${Math.round(u.turbidity)} FNU`);
+    if (bits.length) {
+      const gauge: EnvSignal = {
+        id: "gauge",
+        label: "River gauge",
+        status: "ok",
+        text: `${bits.join(" · ")} at ${u.stationName}.`,
+        source: "USGS",
+      };
+      const at = rows.findIndex((r) => r.id === "fires");
+      rows.splice(at === -1 ? rows.length : at, 0, gauge);
+    }
+  }
+  if (!rows.length) return "";
+  const rank = { veto: 0, caution: 1, ok: 2, na: 3 } as const;
+  rows.sort((a, b) => rank[a.status] - rank[b.status]);
+  const vetoes = rows.filter((r) => r.status === "veto").length;
+  const cautions = rows.filter((r) => r.status === "caution").length;
+  const checked = rows.some((r) => r.status !== "na");
+  const sum = vetoes
+    ? { text: "Don't go", cls: "bad" }
+    : cautions
+      ? { text: `${cautions} caution${cautions === 1 ? "" : "s"}`, cls: "warn" }
+      : checked
+        ? { text: "All clear", cls: "ok" }
+        : { text: "Couldn't check", cls: "na" };
+  const checkedAt = new Date(env.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return `
+    <div class="wa-block">
+      <button type="button" class="wa-head" aria-expanded="false">
+        <span class="wa-title">Water &amp; air</span>
+        <span class="wa-sum ${sum.cls}">${sum.text}</span>
+        <span class="wa-chev" aria-hidden="true">▾</span>
+      </button>
+      <div class="wa-body" hidden>
+        ${rows
+          .map(
+            (r) => `<div class="wa-row">
+              <span class="wa-dot ${r.status}"></span>
+              <span class="wa-main"><strong>${esc(r.label)}</strong> — ${esc(r.text)} <span class="wa-src">${esc(r.source)}</span></span>
+            </div>`,
+          )
+          .join("")}
+        <p class="wa-note">Checked ${checkedAt}. Sample-based checks can lag the water itself — when in doubt, trust your eyes and local notices.</p>
+      </div>
+    </div>`;
+}
+
 /** Full day detail markup — shared by the modal (narrow widths) and the
  *  Trends side panel (desktop widths, #28). */
 function dayDetailHtml(key: string, compact = false): string {
@@ -1069,6 +1201,9 @@ function dayDetailHtml(key: string, compact = false): string {
           )
           .join("")}</div>`
       : `<p class="note">No window reached the Okay level this day.</p>`;
+  // #69: the Water & air block rides today's detail only (current
+  // conditions); other days surface their AQI through the banner.
+  const envHtml = key === startKey() ? envBlockHtml() : "";
   return `
     <div class="verdict verdict-${bandKey(plan)}">Day: ${bandWord(plan).toUpperCase()}</div>
     ${heldBackBannerHtml(plan)}
@@ -1078,6 +1213,7 @@ function dayDetailHtml(key: string, compact = false): string {
       <button type="button" class="badge-this-day">Watch badge</button>
     </div>
     ${slotsHtml}
+    ${envHtml}
     ${
       hours.length
         ? `<p class="note">Weather: high ${Math.round(Math.max(...hours.map((h) => h.tempF)))}°F ·
@@ -1112,6 +1248,18 @@ function wireDayDetail(root: HTMLElement, key: string): void {
     });
   wireSlotIcs(root, exportDayFor(key));
   wireBadgeLinks(root, exportDayFor(key));
+  // #69 (E1): the Water & air header expands/collapses its body in
+  // place; it starts collapsed on every open (no persistence).
+  const waHead = root.querySelector<HTMLElement>(".wa-head");
+  if (waHead)
+    waHead.addEventListener("click", () => {
+      const body = root.querySelector<HTMLElement>(".wa-body");
+      if (!body) return;
+      body.hidden = !body.hidden;
+      waHead.setAttribute("aria-expanded", String(!body.hidden));
+      const chev = waHead.querySelector(".wa-chev");
+      if (chev) chev.textContent = body.hidden ? "▾" : "▴";
+    });
   const badgeBtn = root.querySelector<HTMLElement>(".badge-this-day");
   if (badgeBtn)
     badgeBtn.addEventListener("click", (e) => {
@@ -1173,6 +1321,18 @@ const INFO_HTML = `
     <tr><td>Solar activity</td><td class="dots">ZERO</td><td>Not an input at all.</td></tr>
     <tr><td>Red tide / closures</td><td class="dots">VETO</td><td>Overrides everything — the day is capped and slots are replaced.</td></tr>
   </table>
+  <h3>Environmental data</h3>
+  <p>The day is also checked against live environmental feeds. Three findings <strong>stop the
+  day</strong> outright: a sewage or pollution spill reported within 10 km (Florida's Public
+  Notice of Pollution, Alabama's sewer-overflow reports), an algal toxin detected in a Florida
+  lake sample (FL DEP), and an advisory-level beach bacteria sample within 5 km (lab results
+  via the national Water Quality Portal — sample-based, so it can lag the water itself).</p>
+  <p>Other findings raise the amber <strong>held-back</strong> banner without changing the
+  score: air quality at AQI 101–150 (AirNow), a satellite-detected lake bloom (EPA CyAN — a
+  bloom, not a toxin reading), a recent high E.&nbsp;coli sample, an active fire within 10 km
+  (NASA FIRMS), or a closed Florida shellfish area (FDACS). At <strong>AQI 151+</strong> the
+  banner shows and every hour's score drops by 10. Each family can be switched off under
+  Settings → Environmental data; red tide and dangerous wind always apply.</p>
   <p class="note">Water temperature comes from a nearby USGS gauge when one is reporting;
   otherwise fish bands use air temperature as a labelled proxy. Rut windows for deer come from
   state-published peak-breeding data (AL/FL/GA/MS/TX) and are approximate — Tennessee publishes
@@ -2223,7 +2383,7 @@ const TOUR_STOPS: TourStop[] = [
   {
     anchors: () => [$("#settings-btn")],
     title: "Add or remove targets here",
-    body: "The gear opens Settings — <strong>this is where you choose which targets appear in the dropdown.</strong> The theme and calendar export choices live there too.",
+    body: "The gear opens Settings — <strong>this is where you choose which targets appear in the dropdown.</strong> The theme, calendar export, and environmental data choices live there too.",
   },
   {
     anchors: () => [$("#info-btn")],
@@ -2494,6 +2654,21 @@ function syncTargetChecks(): void {
   updateTargetCount();
 }
 
+/** #69: the Settings Environmental data section — one checkbox per
+ *  family, staged like the rest of Settings and persisted by Save.
+ *  The summary counts the boxes as they stand on screen. */
+function updateEnvSummary(): void {
+  const n = ENV_FAMILY_IDS.filter((id) => $<HTMLInputElement>(`#env-${id}`).checked).length;
+  $("#acc-sum-env").textContent = `${n} of ${ENV_FAMILY_IDS.length} on`;
+}
+
+function syncEnvChecks(): void {
+  for (const id of ENV_FAMILY_IDS) {
+    $<HTMLInputElement>(`#env-${id}`).checked = state.settings.env[id];
+  }
+  updateEnvSummary();
+}
+
 /** #63 accordion: one section open at a time; clicking the open
  *  section's header closes it. */
 function setAccSection(name: string | null): void {
@@ -2606,6 +2781,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#settings-btn").addEventListener("click", () => {
     syncThemeChips();
     syncTargetChecks();
+    syncEnvChecks();
     setAccSection(null); // #63: Settings always opens at the resting state
     openModal("settings-modal");
   });
@@ -2643,6 +2819,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       // Land on the target picker itself, not the Settings front door.
       syncThemeChips();
       syncTargetChecks();
+      syncEnvChecks();
       setAccSection("targets");
       openModal("settings-modal");
       return;
@@ -2779,6 +2956,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   $<HTMLInputElement>("#export-typical").checked = s.includeTypical;
   $<HTMLInputElement>("#export-dontgo").checked = s.includeDontGo;
   syncThemeChips();
+  // #69: stage the env checkboxes from the saved settings; the
+  // summary follows the boxes live while the section is open.
+  syncEnvChecks();
+  for (const id of ENV_FAMILY_IDS) {
+    $<HTMLInputElement>(`#env-${id}`).addEventListener("change", updateEnvSummary);
+  }
   document.querySelectorAll<HTMLElement>("#theme-picker .chip").forEach((c) =>
     c.addEventListener("click", () => {
       const v = c.dataset.themePref;
@@ -2814,14 +2997,32 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   $("#save-settings").addEventListener("click", () => {
+    const prevEnv = JSON.stringify(state.settings.env);
+    const env = {} as AppSettings["env"];
+    for (const id of ENV_FAMILY_IDS) env[id] = $<HTMLInputElement>(`#env-${id}`).checked;
     state.settings = {
       includeTypical: $<HTMLInputElement>("#export-typical").checked,
       includeDontGo: $<HTMLInputElement>("#export-dontgo").checked,
       theme: pendingTheme,
       // #63: persist the enabled targets in catalog order.
       targets: TARGETS.filter((t) => pendingTargets.has(t.id)).map((t) => t.id),
+      // #69: the environmental family toggles.
+      env,
     };
     const savedOk = saveSettings(state.settings);
+    // #69: a changed toggle set re-runs the assessment for the
+    // current place and rebuilds plans from it.
+    if (state.place && JSON.stringify(state.settings.env) !== prevEnv) {
+      const { lat, lon } = state.place;
+      const label = state.place.label;
+      void fetchEnvAssessment(lat, lon, state.settings.env, label, true).then((a) => {
+        if (state.place && state.place.lat === lat && state.place.lon === lon) {
+          state.env = a;
+          state.plansCache.clear();
+          render();
+        }
+      });
+    }
     applyTheme();
     // #63: the dropdown rebuilds from the new enabled set. If the
     // selected target was just disabled, rebuildTargets falls back to
@@ -2847,7 +3048,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.6.4";
+  let versionLabel = "Zero Light 0.7.0";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.
