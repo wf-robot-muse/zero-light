@@ -1875,6 +1875,10 @@ try {
       { timeout: 20000 },
     );
     check("#69 a nearby sewage spill vetoes the day in the planner", true);
+    // #75: the hero pill carries the short form; the full sentence
+    // stays in the line under the hero.
+    const spillPill = await p.locator(".hero-pill").innerText();
+    check("#75 the spill veto pill is the short form", spillPill.includes("Sewage spill reported nearby") && !spillPill.includes("reported —"), spillPill);
     check("#72 the Planner itself carries the Water & air block on a veto day", (await p.locator("#planner .wa-block").count()) === 1);
     await p.click('#view-picker .chip[data-view="trends"]');
     check(
@@ -2182,6 +2186,11 @@ try {
     await p.evaluate(() => document.querySelector("#planner .wa-head")?.click());
     const waText = (await p.textContent("#planner .wa-body")) ?? "";
     check("#74 the block row carries the same evidence", waText.includes("Red tide") && waText.includes("sampled at Hillsborough Bay"));
+    // #75: the hero pill is the short form while the line under the
+    // hero keeps the full evidence sentence.
+    const rtPill = await p.locator(".hero-pill").innerText();
+    check("#75 the red tide pill is the short form", rtPill.includes("Red tide — high concentration") && !rtPill.includes("sampled at"), rtPill);
+    check("#75 the full veto sentence stays under the hero", plannerText.includes("Don't go — red tide — Karenia brevis at high concentration"));
     await ctx.close();
   }
   {

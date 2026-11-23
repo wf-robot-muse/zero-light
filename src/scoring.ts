@@ -165,6 +165,11 @@ export interface DayPlan {
   heldBackBy: string | null;
   slots: Slot[];
   veto: string | null;
+  /** Item #75: the veto's headline form for the hero pill — the
+   *  full sentence already appears under the hero and in the
+   *  Water & air block, so the pill carries only the short form
+   *  supplied by whichever source raised the veto. */
+  vetoShort: string | null;
   astro: Astro;
   typical: boolean;
   solunarMajor: { start: Date; end: Date };
@@ -480,6 +485,8 @@ export interface DayInputs {
   /** External veto (e.g. red tide medium/high, closure). Dangerous wind is
    *  also applied internally. */
   veto?: string | null;
+  /** Item #75: the headline form of `veto` for the hero pill. */
+  vetoShort?: string | null;
   /** Real water temperature (°F) from a nearby USGS gauge (item #1). */
   waterTempF?: number;
   /** Peak rut active for this location/date (item #3). */
@@ -497,6 +504,8 @@ export interface DayInputs {
    *  advisory-level beach bacteria). Applies only when no stronger
    *  veto (the caller's `veto`, e.g. red tide) is already set. */
   envVeto?: string | null;
+  /** Item #75: the headline form of `envVeto` for the hero pill. */
+  envVetoShort?: string | null;
   /** Item #69: environmental caution phrases, merged into the
    *  held-back line ahead of the weather reasons. */
   envCautions?: string[];
@@ -533,8 +542,17 @@ export function generateDayPlan(input: DayInputs): DayPlan {
 
   const maxWind = Math.max(...hours.map((h) => h.windMph));
   let veto = input.veto ?? null;
-  if (!veto) veto = input.envVeto ?? null;
-  if (!veto && maxWind >= 32) veto = `dangerous wind (${Math.round(maxWind)} mph)`;
+  // #75: the short form travels with whichever veto wins, in the
+  // same precedence order; the wind veto's text is already short.
+  let vetoShort = veto ? (input.vetoShort ?? veto) : null;
+  if (!veto) {
+    veto = input.envVeto ?? null;
+    vetoShort = veto ? (input.envVetoShort ?? veto) : null;
+  }
+  if (!veto && maxWind >= 32) {
+    veto = `dangerous wind (${Math.round(maxWind)} mph)`;
+    vetoShort = veto;
+  }
 
   const scored = hours.map((h) => scoreHour(target, h, dq, astro, input.tides));
   // #69: the AQI modifier shifts every hour before slots are built,
@@ -639,6 +657,7 @@ export function generateDayPlan(input: DayInputs): DayPlan {
     heldBackBy: veto ? veto : heldBackParts.length ? heldBackParts.join("; also ") : null,
     slots,
     veto,
+    vetoShort,
     astro,
     typical,
     solunarMajor: major,

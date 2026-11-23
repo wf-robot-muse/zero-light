@@ -399,12 +399,14 @@ function planForKey(key: string): DayPlan {
   // today only; the AQI table carries a forecast, so its caution and
   // score modifier apply to any day it covers.
   let envVeto: string | null = null;
+  let envVetoShort: string | null = null;
   const envCautions: string[] = [];
   let envScoreModifier = 0;
   if (state.env && state.envFor === `${lat},${lon}`) {
     if (isToday) {
       const v = state.env.vetoes.find((x) => x.kinds.includes(target.kind));
       envVeto = v ? v.text : null;
+      envVetoShort = v ? v.short : null;
       for (const c of state.env.cautions) {
         if (c.kinds.includes(target.kind)) envCautions.push(c.text);
       }
@@ -421,7 +423,9 @@ function planForKey(key: string): DayPlan {
     hours,
     tides: tidesForDay(state.tides, date),
     veto: target.kind === "saltwater" ? habVetoReason() : null,
+    vetoShort: target.kind === "saltwater" ? habVetoShort() : null,
     envVeto,
+    envVetoShort,
     envCautions,
     envScoreModifier,
     waterTempF: isToday && target.kind !== "hunting" ? state.usgs?.waterTempF : undefined,
@@ -547,7 +551,7 @@ function heroHtml(plan: DayPlan, key: string, target: TargetDef): string {
   // at the tablet tier (see WIDE_STENCILS above).
   const stencilWide = WIDE_STENCILS.has(stencilName) ? "1" : "0";
   const pill = plan.veto
-    ? `<span class="hero-pill">⦻ ${esc(plan.veto)}</span>`
+    ? `<span class="hero-pill">⦻ ${esc(plan.vetoShort ?? plan.veto)}</span>`
     : plan.slots.length
       ? `<span class="hero-pill">${plan.slots[0].labelSymbol} Best window ${fmtRange(plan.slots[0].start, plan.slots[0].end)}</span>`
       : `<span class="hero-pill">No window rated Okay or better</span>`;
@@ -1141,6 +1145,14 @@ function sampleAgeText(ms: number): string {
 /** #74: the red tide veto sentence carried by the plan (and so by
  *  the hero, print and calendar exports), built from the triggering
  *  sample's own fields — what was found, where, when, how far. */
+/** Item #75: the red tide veto's headline form for the hero pill —
+ *  the full evidence sentence stays under the hero. */
+function habVetoShort(): string | null {
+  const v = state.habInfo?.veto;
+  if (!v) return null;
+  return `Red tide — ${v.level} concentration`;
+}
+
 function habVetoReason(): string | null {
   const v = state.habInfo?.veto;
   if (!v) return null;
@@ -3358,7 +3370,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.9.0";
+  let versionLabel = "Zero Light 0.9.1";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.

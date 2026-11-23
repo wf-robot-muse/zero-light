@@ -40,6 +40,9 @@ export interface EnvSignal {
 export interface EnvVeto {
   kinds: TargetKind[];
   text: string;
+  /** Item #75: the headline form of `text` for the hero pill —
+   *  built beside the sentence so the two can never disagree. */
+  short: string;
 }
 
 export interface EnvCaution {
@@ -557,6 +560,7 @@ function buildAssessment(
       const what = vetoHit.kind === "sewage" ? "Sewage spill" : "Pollution spill";
       vetoes.push({
         kinds: FISHING,
+        short: `${what} reported nearby`,
         text:
           `${vetoHit.kind === "sewage" ? "sewage spill" : "pollution spill"} reported — ` +
           `${vetoHit.title}${vetoHit.facility ? ` (${vetoHit.facility})` : ""}, ` +
@@ -615,6 +619,7 @@ function buildAssessment(
       if (advisory) {
         vetoes.push({
           kinds: ["saltwater"],
+          short: "Bacteria at advisory level",
           text:
             `bacteria at advisory level near this beach — ${advisory.stationName} sampled ` +
             `${Math.round(advisory.value)} per 100 mL on ${fmtDateKey(advisory.date)}, ${advisory.distKm.toFixed(0)} km away (EPA advisory criterion: 104)`,
@@ -674,6 +679,7 @@ function buildAssessment(
     if (toxinHit) {
       vetoes.push({
         kinds: ["freshwater"],
+        short: "Algal toxin found in a sample",
         text:
           `algal toxin found in a water sample — ${toxinHit.site}, sampled ` +
           `${toxinHit.dateMs ? fmtDateMs(toxinHit.dateMs) : "recently"} (FL DEP)`,
