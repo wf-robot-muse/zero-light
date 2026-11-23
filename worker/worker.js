@@ -543,27 +543,43 @@ async function handleAir(request, env, ctx, url) {
   const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
   const value = await cachedRaw(env, ctx, `air1:${cellLat}:${cellLon}`, 3600, 3600, async () => {
     if (env.AIRNOW_API_KEY) {
+      // AirNow's 2026 API: the original /aq/observation/latLong and
+      // /aq/forecast/latLong services were retired on 2026-10-01 and
+      // now answer only a WebServiceError. The replacements below are
+      // the endpoints the official client libraries moved to in June
+      // 2026: one current-conditions endpoint for ZIP or lat/lon, and
+      // a forecast endpoint that returns the currently issued forecast
+      // days. Field names are camelCase now, and a forecast row can
+      // carry aqi -1 when only a category was forecast — then the
+      // category band's midpoint stands in for the number so the
+      // app's 101/151 thresholds still behave.
       const base = "https://www.airnowapi.org/aq";
-      const qs = `format=application/json&latitude=${cellLat}&longitude=${cellLon}&distance=25&API_KEY=${env.AIRNOW_API_KEY}`;
+      const qs = `format=application/json&latitude=${cellLat}&longitude=${cellLon}&API_KEY=${env.AIRNOW_API_KEY}`;
       const [cur, fc] = await Promise.all([
-        fetchJsonUp(`${base}/observation/latLong/current/?${qs}`),
-        fetchJsonUp(`${base}/forecast/latLong/?${qs}`),
+        fetchJsonUp(`${base}/observation/current/ziplatlong?${qs}`),
+        fetchJsonUp(`${base}/forecast/current?${qs}`),
       ]);
       let current = null;
       if (Array.isArray(cur)) {
         for (const r of cur) {
-          const aqi = typeof r?.AQI === "number" ? r.AQI : NaN;
+          const raw = typeof r?.nowcastAQI === "number" ? r.nowcastAQI : r?.aqi;
+          const aqi = typeof raw === "number" ? raw : NaN;
           if (Number.isFinite(aqi) && aqi >= 0 && (!current || aqi > current.aqi)) {
-            current = { aqi, category: aqiCategory(aqi), area: String(r.ReportingArea ?? "").slice(0, 60) };
+            current = { aqi, category: aqiCategory(aqi), area: String(r.reportingAreaName ?? "").slice(0, 60) };
           }
         }
       }
+      const CAT_MID = { 1: 25, 2: 75, 3: 125, 4: 175, 5: 250, 6: 350 };
       const byDate = new Map();
       if (Array.isArray(fc)) {
         for (const r of fc) {
-          const date = String(r?.DateForecast ?? "").trim().slice(0, 10);
-          const aqi = typeof r?.AQI === "number" ? r.AQI : NaN;
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(aqi) || aqi < 0) continue;
+          const date = String(r?.dateValid ?? "").trim().slice(0, 10);
+          let aqi = typeof r?.aqi === "number" ? r.aqi : NaN;
+          if (!Number.isFinite(aqi) || aqi < 0) {
+            const mid = CAT_MID[r?.categoryNumber];
+            aqi = typeof mid === "number" ? mid : NaN;
+          }
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(aqi)) continue;
           if (!byDate.has(date) || aqi > byDate.get(date)) byDate.set(date, aqi);
         }
       }
