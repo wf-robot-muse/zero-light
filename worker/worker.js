@@ -995,6 +995,66 @@ async function handleShellfish(request, env, ctx, url) {
   return jsonResponse(value, 200);
 }
 
+// --- Long-term water quality (item #70): EPA ATTAINS assessments.
+// In plain words: ATTAINS is the states' and EPA's long-term record
+// of which waters are impaired (the 303(d) list and its neighbours).
+// It is NOT a current-conditions feed — assessments are reviewed on
+// multi-year cycles — so the app shows it as a background note only;
+// it never vetoes, cautions or moves a score. Chain: the point is
+// first resolved to its HUC12 watershed through EPA's own
+// HydrologicUnits ArcGIS service (no key), then the ATTAINS
+// huc12summary service (data.gov key, held as a Worker secret)
+// reports how the watershed's assessed waters break down and which
+// impairment causes lead. Assessments change slowly, so the answer
+// is cached for a week.
+async function handleAttains(request, env, ctx, url) {
+  const ll = parseLatLon(url);
+  if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
+  if (!env.DATA_GOV_API_KEY) return jsonResponse({ error: "not configured" }, 503);
+  const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
+  const value = await cachedRaw(env, ctx, `attains1:${cellLat}:${cellLon}`, 7 * 86400, 7 * 86400, async () => {
+    const hucQ =
+      `geometry=${cellLon},${cellLat}&geometryType=esriGeometryPoint&inSR=4326` +
+      `&spatialRel=esriSpatialRelIntersects&outFields=HUC12,NAME&returnGeometry=false&f=json`;
+    const hj = await fetchJsonUp(
+      `https://gispub.epa.gov/arcgis/rest/services/OW/HydrologicUnits/MapServer/6/query?${hucQ}`,
+    );
+    const feat = Array.isArray(hj?.features) ? hj.features[0] : null;
+    const huc = typeof feat?.attributes?.huc12 === "string" ? feat.attributes.huc12 : "";
+    if (!/^\d{12}$/.test(huc)) return null;
+    const watershed = typeof feat?.attributes?.name === "string" ? feat.attributes.name.slice(0, 120) : "";
+    const sj = await fetchJsonUp(
+      `https://api.epa.gov/attains/huc12summary?huc=${huc}&api_key=${encodeURIComponent(env.DATA_GOV_API_KEY)}`,
+    );
+    const item = Array.isArray(sj?.items) ? sj.items[0] : null;
+    if (!item || typeof item !== "object") return null;
+    const byStatus = Array.isArray(item.summaryByOverallStatus) ? item.summaryByOverallStatus : [];
+    const countFor = (name) => {
+      const row = byStatus.find((r) => r && r.overallStatus === name);
+      return typeof row?.assessmentUnitCount === "number" ? row.assessmentUnitCount : 0;
+    };
+    const causes = (Array.isArray(item.summaryByParameterImpairments) ? item.summaryByParameterImpairments : [])
+      .filter((r) => r && typeof r.parameterGroupName === "string" && typeof r.assessmentUnitCount === "number")
+      .sort((a, b) => b.assessmentUnitCount - a.assessmentUnitCount)
+      .slice(0, 3)
+      .map((r) => {
+        const words = r.parameterGroupName.toLowerCase().split(" ");
+        return words.map((w) => (w.length > 2 ? w[0].toUpperCase() + w.slice(1) : w)).join(" ").slice(0, 60);
+      });
+    return {
+      huc,
+      watershed,
+      totalUnits: typeof item.assessmentUnitCount === "number" ? item.assessmentUnitCount : 0,
+      impairedUnits: countFor("Not Supporting"),
+      goodUnits: countFor("Fully Supporting"),
+      notAssessedUnits: countFor("Not Assessed"),
+      causes,
+    };
+  });
+  if (value === null) return jsonResponse({ error: "upstream unavailable" }, 502);
+  return jsonResponse(value, 200);
+}
+
 // ------------------------------------------------------------- router
 //
 // How one request flows through this Worker, in plain words:
@@ -1062,6 +1122,8 @@ export default {
         return handleFirms(request, env, ctx, url);
       case "/shellfish":
         return handleShellfish(request, env, ctx, url);
+      case "/attains":
+        return handleAttains(request, env, ctx, url);
       default:
         return jsonResponse({ error: "not found" }, 404);
     }

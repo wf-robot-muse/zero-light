@@ -170,6 +170,12 @@
           </div>
         </div>
 
+        <!-- #72: at wide widths the Trends view carries the Water &
+             air pill card in the rail, directly under the view
+             toggle. Filled by renderTrends; hidden in the Planner
+             (whose pill card lives in #plan-cards) and below 75em. -->
+        <div id="wa-rail" hidden></div>
+
         <div id="plan-side"></div>
       </div>
 
@@ -183,6 +189,11 @@
         <div id="plan-cards"></div>
       </div>
     </main>
+
+    <!-- #72: the Water & air pill detail balloon — a speech-balloon
+         overlay anchored to the tapped pill (Sheet J). One shared
+         element; main.ts fills and positions it. -->
+    <div id="wa-balloon" class="wa-balloon" hidden></div>
 
     <!-- #26: print sheets are rendered here from the same plan data -->
     <div id="print-root" aria-hidden="true"></div>
@@ -248,6 +259,7 @@
               <label class="check"><input id="env-bacteria" type="checkbox" /> Bacteria samples — recent high E. coli samples in rivers and lakes</label>
               <label class="check"><input id="env-fires" type="checkbox" /> Active fires — satellite fire detections near your spot</label>
               <label class="check"><input id="env-shellfish" type="checkbox" /> Shellfish areas — Florida harvest-area closures</label>
+              <label class="check"><input id="env-attains" type="checkbox" /> Long-term water notes — EPA impairment assessments for your watershed (background only, never changes a rating)</label>
               <p class="note">Red tide and dangerous-wind vetoes are always on and aren't listed here.</p>
             </div>
           </section>

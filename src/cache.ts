@@ -31,6 +31,7 @@ export const TTL = {
   envWqpMs: 86400_000, // bacteria lab samples: posted days late anyway
   envFirmsMs: 3 * 3600_000, // active-fire detections
   envShellfishMs: 6 * 3600_000, // FDACS daily status pages
+  envAttainsMs: 7 * 86400_000, // ATTAINS assessments: reviewed on multi-year cycles (#70)
 } as const;
 
 interface Entry {

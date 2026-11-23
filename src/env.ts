@@ -1,10 +1,11 @@
 // Environmental hazard data (item #69).
 // In plain words: before this item the only contamination input was
 // Florida red tide. This module asks the Layer 2 Worker — which does
-// the upstream fetching and caching — about seven more families:
+// the upstream fetching and caching — about eight more families:
 // air quality, spills/sewage notices, beach bacteria, algal blooms
 // (satellite + Florida's own sampling), freshwater bacteria samples,
-// active fires, and Florida shellfish closures. It boils the answers
+// active fires, Florida shellfish closures, and (item #70) EPA
+// ATTAINS long-term water assessments. It boils the answers
 // down to one assessment the rest of the app can use: vetoes (don't
 // go), caution phrases for the held-back banner, a per-day air
 // quality table (which also carries the one score modifier), and the
@@ -342,6 +343,46 @@ function validateShellfish(d: unknown): ShellfishData | null {
   return { published: str(o.published, 60), closed, total: o.areas.length };
 }
 
+// ------------------------------------------------------------ attains
+
+/** Item #70: EPA ATTAINS long-term assessment summary for the
+ *  place's HUC12 watershed, as shaped by the Worker's /attains
+ *  route. Annotation only — this family never vetoes, cautions or
+ *  modifies a score; the row text says so. */
+interface AttainsData {
+  watershed: string;
+  totalUnits: number;
+  impairedUnits: number;
+  goodUnits: number;
+  notAssessedUnits: number;
+  causes: string[];
+}
+
+function validateAttains(d: unknown): AttainsData | null {
+  const o = obj(d);
+  const totalUnits = num(o.totalUnits);
+  const impairedUnits = num(o.impairedUnits);
+  const goodUnits = num(o.goodUnits);
+  const notAssessedUnits = num(o.notAssessedUnits);
+  if (totalUnits === null || impairedUnits === null || goodUnits === null || notAssessedUnits === null) {
+    return null;
+  }
+  const causes: string[] = [];
+  if (Array.isArray(o.causes)) {
+    for (const c of o.causes.slice(0, 3)) {
+      if (typeof c === "string" && c) causes.push(c.slice(0, 60));
+    }
+  }
+  return {
+    watershed: str(o.watershed, 120),
+    totalUnits,
+    impairedUnits,
+    goodUnits,
+    notAssessedUnits,
+    causes,
+  };
+}
+
 // ------------------------------------------------------------ build
 
 /**
@@ -358,7 +399,7 @@ export async function fetchEnvAssessment(
   force = false,
 ): Promise<EnvAssessment> {
   const on = (id: EnvFamilyId) => env[id];
-  const [air, cyan, spill, habState, wqp, firms, shellfish] = await Promise.all([
+  const [air, cyan, spill, habState, wqp, firms, shellfish, attains] = await Promise.all([
     on("air")
       ? workerFamily("air", lat, lon, TTL.envAirMs, force, validateAir)
       : Promise.resolve(null),
@@ -381,6 +422,9 @@ export async function fetchEnvAssessment(
       : Promise.resolve(null),
     on("shellfish")
       ? workerFamily("shellfish", lat, lon, TTL.envShellfishMs, force, validateShellfish)
+      : Promise.resolve(null),
+    on("attains")
+      ? workerFamily("attains", lat, lon, TTL.envAttainsMs, force, validateAttains)
       : Promise.resolve(null),
   ]);
 
@@ -742,6 +786,53 @@ export async function fetchEnvAssessment(
           source: "NASA FIRMS",
         });
       }
+    }
+  }
+
+  // --- Long-term water notes (EPA ATTAINS, #70). Annotation only:
+  // states and the EPA review these waters on multi-year cycles, so
+  // this row is background about the watershed, never a condition of
+  // today. It is pushed last; the block's flagged-first sort keeps it
+  // behind any live caution.
+  if (on("attains")) {
+    if (!attains || attains.totalUnits === 0) {
+      signals.push({
+        id: "attains",
+        label: "Long-term water notes",
+        status: "na",
+        text: "No long-term assessment record found for this watershed.",
+        source: "EPA ATTAINS",
+      });
+    } else if (attains.impairedUnits > 0) {
+      signals.push({
+        id: "attains",
+        label: "Long-term water notes",
+        status: "ok",
+        text:
+          `${attains.impairedUnits} of ${attains.totalUnits} assessed waters in this watershed are listed impaired` +
+          (attains.causes.length ? ` — leading causes: ${attains.causes.join(", ").toLowerCase()}` : "") +
+          `. Long-term state/EPA assessments, not today's conditions.`,
+        source: "EPA ATTAINS",
+      });
+    } else if (attains.goodUnits > 0) {
+      signals.push({
+        id: "attains",
+        label: "Long-term water notes",
+        status: "ok",
+        text:
+          `No impaired listings in this watershed — ${attains.goodUnits} assessed water${attains.goodUnits > 1 ? "s" : ""} fully supporting` +
+          (attains.notAssessedUnits ? `, ${attains.notAssessedUnits} not yet assessed` : "") +
+          `. Long-term state/EPA assessments, not today's conditions.`,
+        source: "EPA ATTAINS",
+      });
+    } else {
+      signals.push({
+        id: "attains",
+        label: "Long-term water notes",
+        status: "na",
+        text: "The waters in this watershed have not been assessed yet.",
+        source: "EPA ATTAINS",
+      });
     }
   }
 

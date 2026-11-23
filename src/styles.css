@@ -830,3 +830,45 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
 .wa-dot.na { background: var(--muted); }
 .wa-src { color: var(--muted); font-size: 0.85em; }
 .wa-note { color: var(--muted); font-size: 0.88em; margin: 6px 0 2px; }
+
+/* ---- #72: Water & air presentation. Below 75em the in-flow block
+   (Planner + day detail) is the only surface. At 75em+ the block
+   steps aside and the rail pill card takes over: in the Planner it
+   sits in #plan-cards where "Coming up" used to be; in Trends it
+   sits in #wa-rail under the view toggle, and the day panel carries
+   no block. The pill card inside #plan-cards must stay hidden below
+   75em even though the area cards around it show from 52.5em. */
+.wa-card { display: none; }
+#wa-rail { display: none; }
+.wa-pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+.wa-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: inherit; font-size: 13px; cursor: pointer; }
+.wa-pill .pname { font-weight: 600; }
+.wa-pill .pval { font-weight: 700; }
+.wa-pill .pval.ok { color: #2e7d46; }
+.wa-pill .pval.caution { color: #8a5200; }
+.wa-pill .pval.veto { color: #b3261e; }
+.wa-pill .pval.na { color: var(--muted); }
+.wa-pill.sel { border-color: #0b4a2e; box-shadow: 0 0 0 1px #0b4a2e; }
+.wa-card h4 .wa-sum { float: right; }
+/* The balloon: a comic-style speech bubble, fixed-positioned by
+   openWaBalloon() with its tail over the pill (--tail-x). It floats
+   above menus (40) and modals (50) but below nothing it must beat —
+   it is a transient detail popover, z 75 like the badge menu. */
+.wa-balloon { position: fixed; z-index: 75; width: 252px; box-sizing: border-box; background: var(--card); border: 1.5px solid #0b4a2e; border-radius: 14px; box-shadow: 0 10px 28px rgba(10, 30, 20, .28); padding: 12px 14px; }
+.wa-balloon::before { content: ""; position: absolute; top: -8px; left: var(--tail-x, 30px); width: 14px; height: 14px; margin-left: -8px; background: var(--card); border-left: 1.5px solid #0b4a2e; border-top: 1.5px solid #0b4a2e; transform: rotate(45deg); }
+.wa-balloon.flip::before { top: auto; bottom: -8px; border: none; border-right: 1.5px solid #0b4a2e; border-bottom: 1.5px solid #0b4a2e; }
+.wa-x { position: absolute; top: 5px; right: 7px; background: none; border: none; font-size: 13px; color: var(--muted); cursor: pointer; padding: 2px 4px; }
+.wa-b-title { font-weight: 700; display: flex; gap: 7px; align-items: center; padding-right: 18px; }
+.wa-b-title .wa-dot { margin-top: 0; }
+.wa-b-text { margin: 7px 0 5px; font-size: 13.5px; line-height: 1.45; }
+.wa-b-src { margin: 0; color: var(--muted); font-size: 12px; }
+@media (min-width: 75em) {
+  .wa-flow { display: none; }
+  .day-panel .wa-block { display: none; }
+  .wa-card { display: block; }
+  #wa-rail { display: block; grid-column: 1; grid-row: 5; }
+  #wa-rail[hidden] { display: none; }
+}
+@media print {
+  .wa-balloon, .wa-card, #wa-rail { display: none !important; }
+}

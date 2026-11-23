@@ -213,6 +213,7 @@ try {
     wqp: { entero: [], ecoli: [] },
     firms: { detections: [] },
     shellfish: { region: null, areas: [] },
+    attains: { huc: "031401050401", watershed: "Test Watershed", totalUnits: 4, impairedUnits: 0, goodUnits: 3, notAssessedUnits: 1, causes: [] },
   };
   for (const [routeName, body] of Object.entries(envBenign)) {
     await page.route(`**workers.dev/${routeName}**`, (route) =>
@@ -383,7 +384,13 @@ try {
   );
   check("hour-by-hour strip renders 24 bars", (await page.locator(".hourly .bar").count()) === 24);
   check("week at a glance renders 7 days", (await page.locator(".wk-day").count()) === 7);
-  check("area cards render (Coming up / gauge / red tide)", (await page.locator("#plan-cards .acard").count()) === 3);
+  check(
+    "#72 area cards render (gauge; Coming up and Red tide cards removed)",
+    (await page.evaluate(() => {
+      const heads = [...document.querySelectorAll("#plan-cards .acard h4")].map((h) => h.textContent ?? "");
+      return heads.some((t) => t.includes("Nearest gauge")) && !heads.some((t) => t.includes("Coming up") || t.trim() === "Red tide");
+    })) === true,
+  );
   check("day details render as tiles at this width", (await page.locator("#planner .tile").count()) >= 4);
 
   // #26: print menu exists; the beforeprint path renders a Day sheet.
@@ -782,6 +789,8 @@ try {
   const aboutText = (await page.textContent("#about-modal")) ?? "";
   check("about credits Geoapify", aboutText.includes("Geoapify"));
   check("about credits OpenStreetMap", aboutText.includes("OpenStreetMap"));
+  check("#71 about credits the #69/#70 sources", ["AirNow", "NASA FIRMS", "EPA CyAN", "Water Quality Portal", "Florida DEP", "Alabama ADEM", "Florida FDACS", "EPA ATTAINS"].every((s) => aboutText.includes(s)));
+  check("#71 about carries the AirNow preliminary note and FIRMS acknowledgment", aboutText.includes("preliminary and subject to change") && aboutText.includes("Earth Science Data and Information System"));
   check("about carries the settled disclaimer", aboutText.includes("planning guidance only"));
   check("about carries All Rights Reserved", aboutText.includes("All Rights Reserved"));
   check("about has the Using Zero Light section (#27)", aboutText.includes("Using Zero Light"));
@@ -1812,6 +1821,15 @@ try {
     await p.route("**workers.dev/wqp**", fulfill({ entero: [], ecoli: [] }));
     await p.route("**workers.dev/firms**", fulfill({ detections: [] }));
     await p.route("**workers.dev/shellfish**", fulfill({ region: null, areas: [] }));
+    await p.route("**workers.dev/attains**", fulfill({
+      huc: "031401050401",
+      watershed: "Graveyard Branch-Bayou Texar Frontal",
+      totalUnits: 13,
+      impairedUnits: 11,
+      goodUnits: 1,
+      notAssessedUnits: 1,
+      causes: ["Mercury", "Nutrients", "Metals (other than mercury)"],
+    }));
   };
   const pickTampaRedfish = async (p) => {
     await p.goto("http://localhost:4173/", { waitUntil: "load" });
@@ -1857,6 +1875,7 @@ try {
       { timeout: 20000 },
     );
     check("#69 a nearby sewage spill vetoes the day in the planner", true);
+    check("#72 the Planner itself carries the Water & air block on a veto day", (await p.locator("#planner .wa-block").count()) === 1);
     await p.click('#view-picker .chip[data-view="trends"]');
     check(
       "#69 the veto day carries the red dot in Trends",
@@ -1884,6 +1903,7 @@ try {
     );
     const waText = (await p.textContent("#day-modal .wa-body")) ?? "";
     check("#69 the spill row shows inside the block", waText.includes("Spills") && waText.includes("Hillsborough River"));
+    check("#70 the ATTAINS row rides the block as an annotation", waText.includes("Long-term water notes") && waText.includes("listed impaired") && waText.includes("mercury"));
     await ctx.close();
   }
   {
@@ -1914,6 +1934,27 @@ try {
       { timeout: 20000 },
     );
     check("#69 an AQI 132 day raises the held-back banner", true);
+    check("#72 the Planner carries the block on a normal day too", (await p.locator("#planner .wa-block").count()) === 1);
+    check(
+      "#72 the Planner block header counts the caution",
+      ((await p.textContent("#planner .wa-sum")) ?? "").includes("1 caution"),
+    );
+    await p.click("#planner .wa-head");
+    const plannerWa = (await p.textContent("#planner .wa-body")) ?? "";
+    check("#70 the ATTAINS row shows in the Planner block", plannerWa.includes("Long-term water notes") && plannerWa.includes("11 of 13"));
+    await p.click('#day-picker .chip[data-offset="1"]');
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("Air forecast only"),
+      null,
+      { timeout: 20000 },
+    );
+    check("#72 a future day gets the slim air-forecast block in the Planner", true);
+    await p.click('#day-picker .chip[data-offset="0"]');
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("AQI 132"),
+      null,
+      { timeout: 20000 },
+    );
     await p.click('#view-picker .chip[data-view="trends"]');
     check(
       "#69 today carries the amber dot",
@@ -1935,16 +1976,16 @@ try {
     await p.waitForSelector("#settings-modal:not([hidden])", { timeout: 8000 });
     await p.click('[data-acc-head="env"]');
     check(
-      "#69 settings env section lists 7 toggles",
-      (await p.locator('[data-acc-body="env"] input[type="checkbox"]').count()) === 7,
+      "#69/#70 settings env section lists 8 toggles",
+      (await p.locator('[data-acc-body="env"] input[type="checkbox"]').count()) === 8,
     );
     check(
-      "#69 all 7 env toggles start on",
-      (await p.locator('[data-acc-body="env"] input[type="checkbox"]:checked').count()) === 7,
+      "#69/#70 all 8 env toggles start on",
+      (await p.locator('[data-acc-body="env"] input[type="checkbox"]:checked').count()) === 8,
     );
-    check("#69 env summary reads 7 of 7 on", (await p.textContent("#acc-sum-env")) === "7 of 7 on");
+    check("#70 env summary reads 8 of 8 on", (await p.textContent("#acc-sum-env")) === "8 of 8 on");
     await p.click("#env-air");
-    check("#69 env summary follows the boxes live", (await p.textContent("#acc-sum-env")) === "6 of 7 on");
+    check("#69 env summary follows the boxes live", (await p.textContent("#acc-sum-env")) === "7 of 8 on");
     await p.click("#save-settings");
     await p.waitForSelector("#settings-modal[hidden]", { state: "attached", timeout: 8000 });
     const stored = await p.evaluate(() => JSON.parse(localStorage.getItem("zl_env_data") ?? "{}"));
@@ -1955,7 +1996,91 @@ try {
       "#69 reopening settings shows the saved toggle off",
       (await p.evaluate(() => document.querySelector("#env-air")?.checked)) === false,
     );
-    check("#69 reopening settings shows 6 of 7 on", (await p.textContent("#acc-sum-env")) === "6 of 7 on");
+    check("#69 reopening settings shows 7 of 8 on", (await p.textContent("#acc-sum-env")) === "7 of 8 on");
+    await ctx.close();
+  }
+  {
+    // #72 wide screens (≥75em): the rail pill card replaces the
+    // in-flow block, "Coming up" and the Red tide card are gone, the
+    // Trends rail carries the same card under the toggle, the day
+    // panel carries no block, and the balloon opens/moves/closes.
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1");
+    });
+    const p = await ctx.newPage();
+    const today = new Date();
+    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    await envRoutes(
+      p,
+      { covered: true, notices: [] },
+      {
+        source: "airnow",
+        current: { aqi: 132 },
+        daily: [
+          { date: dateStr(today), aqi: 132 },
+          { date: dateStr(tomorrow), aqi: 90 },
+        ],
+      },
+    );
+    await pickTampaRedfish(p);
+    await p.waitForFunction(
+      () => document.querySelector("#planner")?.textContent?.includes("AQI 132"),
+      null,
+      { timeout: 20000 },
+    );
+    check("#72 wide: the pill card shows in the Planner rail", await p.locator("#plan-cards .wa-card").isVisible());
+    check("#72 wide: pills cover the families", (await p.locator("#plan-cards .wa-pill").count()) >= 8);
+    check(
+      "#70 wide: the ATTAINS pill reads Impaired",
+      ((await p.textContent('#plan-cards .wa-pill[data-wa-id="attains"] .pval')) ?? "").trim() === "Impaired",
+    );
+    check(
+      "#72 wide: the in-flow block is hidden at this width",
+      (await p.evaluate(() => getComputedStyle(document.querySelector("#planner .wa-flow")).display)) === "none",
+    );
+    check(
+      "#72 wide: Coming up and the Red tide card are gone",
+      (await p.evaluate(() => {
+        const heads = [...document.querySelectorAll("#plan-cards .acard h4")].map((h) => h.textContent ?? "");
+        return !heads.some((t) => t.includes("Coming up") || t.trim() === "Red tide");
+      })) === true,
+    );
+    // Pill clicks go through evaluate: a real click scrolls the
+    // pill into view first, and the balloon's close-on-scroll rule
+    // (the #35 menu pattern) would shut it again — the established
+    // approach for menu items in this harness.
+    const clickSel = (sel) => p.evaluate((s) => document.querySelector(s)?.click(), sel);
+    await clickSel('#plan-cards .wa-pill[data-wa-id="air"]');
+    await p.waitForSelector("#wa-balloon:not([hidden])", { timeout: 8000 });
+    check(
+      "#72 wide: the balloon opens on the tapped pill",
+      ((await p.textContent("#wa-balloon .wa-b-title")) ?? "").includes("Air quality") &&
+        ((await p.textContent("#wa-balloon .wa-b-text")) ?? "").includes("AQI 132"),
+    );
+    await clickSel('#plan-cards .wa-pill[data-wa-id="attains"]');
+    check(
+      "#72 wide: tapping another pill moves the balloon",
+      ((await p.textContent("#wa-balloon .wa-b-title")) ?? "").includes("Long-term water notes"),
+    );
+    await clickSel("#plan-cards .wa-card h4");
+    check("#72 wide: tapping off the balloon closes it", await p.evaluate(() => document.querySelector("#wa-balloon")?.hidden === true));
+    await clickSel('#plan-cards .wa-pill[data-wa-id="air"]');
+    await p.waitForSelector("#wa-balloon:not([hidden])", { timeout: 8000 });
+    await p.keyboard.press("Escape");
+    check("#72 wide: Escape closes the balloon", await p.evaluate(() => document.querySelector("#wa-balloon")?.hidden === true));
+    await p.click('#view-picker .chip[data-view="trends"]');
+    check("#72 wide: the Trends rail carries the pill card under the toggle", await p.locator("#wa-rail .wa-card").isVisible());
+    await p.click("#trends .day-block >> nth=0");
+    await p.waitForSelector("#day-panel:not([hidden])", { timeout: 8000 });
+    check(
+      "#72 wide: the day panel carries no Water & air block",
+      (await p.evaluate(() => {
+        const b = document.querySelector("#day-panel .wa-block");
+        return !b || getComputedStyle(b).display === "none";
+      })) === true,
+    );
     await ctx.close();
   }
   {

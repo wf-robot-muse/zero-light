@@ -37,7 +37,8 @@ export type EnvFamilyId =
   | "bloom"
   | "bacteria"
   | "fires"
-  | "shellfish";
+  | "shellfish"
+  | "attains";
 
 export const ENV_FAMILY_IDS: readonly EnvFamilyId[] = [
   "air",
@@ -47,6 +48,7 @@ export const ENV_FAMILY_IDS: readonly EnvFamilyId[] = [
   "bacteria",
   "fires",
   "shellfish",
+  "attains",
 ];
 
 export type EnvSettings = Record<EnvFamilyId, boolean>;

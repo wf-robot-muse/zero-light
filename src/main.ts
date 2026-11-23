@@ -636,32 +636,19 @@ function detailItems(plan: DayPlan, key: string, target: TargetDef): { label: st
 function areaCardsHtml(selectedKey: string): string {
   const target = currentTarget();
   if (!target || !state.place) return "";
-  const rows: string[] = [];
-  for (let i = 1; i <= 3; i++) {
-    const key = addDaysKey(startKey(), i);
-    const plan = planForKey(key);
-    const date = parseDateKey(key);
-    rows.push(
-      `<div class="uprow"><span class="dotb dot-${bandKey(plan)}"></span><span>${date.toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}</span><span class="upband">${esc(bandWord(plan))}</span></div>`,
-    );
-  }
   const gauge = state.usgs
     ? `<div class="acard-v">${state.usgs.waterTempF !== undefined ? `${Math.round(state.usgs.waterTempF)}°F` : "—"}</div>
        <div class="acard-s">${esc(state.usgs.stationName)}${state.usgs.dischargeCfs !== undefined ? ` · flow ${Math.round(state.usgs.dischargeCfs)} cfs` : ""}${state.usgs.observedAt ? ` · ${esc(state.usgs.observedAt)}` : ""}</div>`
     : `<div class="acard-s">No USGS gauge reporting near this location.</div>`;
-  const { lat, lon } = currentLatLon();
-  const inFlorida = lat >= 24 && lat <= 31.5 && lon >= -88.5 && lon <= -79.5;
-  const tide = state.habVeto
-    ? `<div class="acard-s acard-alert">${esc(state.habVeto)}</div>`
-    : inFlorida
-      ? `<div class="acard-s">No red tide detected near this location in the latest FWC-FWRI samples.</div>`
-      : `<div class="acard-s">Red tide monitoring covers Florida coastal waters (FWC-FWRI).</div>`;
   void selectedKey;
+  // #72: the "Coming up" card and the standalone Red tide card are
+  // gone (red tide is a condition inside Water & air now). At wide
+  // widths the Water & air pill card takes the first slot here; CSS
+  // shows it only at 75em+, where the in-flow block steps aside.
   return `
   <div class="area-cards enrich">
-    <div class="acard"><h4>Coming up</h4>${rows.join("")}</div>
+    ${waPillsHtml()}
     <div class="acard"><h4>Nearest gauge</h4>${gauge}</div>
-    <div class="acard"><h4>Red tide</h4>${tide}</div>
   </div>`;
 }
 
@@ -818,7 +805,9 @@ function renderPlanner(): void {
         <h2>Don't go — ${esc(plan.veto)}</h2>
         <p>${esc(fmtDay(key))} · ${esc(target.name)} · ${esc(locationShortName())}</p>
         <p class="note">Safety and closures outrank every score. Check conditions again before going.</p>
-      </section>`;
+      </section>
+      ${waFlowHtml(key)}`;
+    wireWaBlockIn(el);
     return;
   }
 
@@ -854,6 +843,7 @@ function renderPlanner(): void {
       <button type="button" id="export-day">Export this day (.ics)</button>
       <button type="button" id="badge-day">Watch badge</button>
     </div>
+    ${waFlowHtml(key)}
     <section class="details-sec">
       <h3>Day details — ${esc(target.name)}</h3>
       <div class="det2">${listHtml}</div>
@@ -867,6 +857,7 @@ function renderPlanner(): void {
     </section>`;
   wireSlotIcs(el, day);
   wireBadgeLinks(el, day);
+  wireWaBlockIn(el);
   el.querySelectorAll<HTMLElement>(".wk-day").forEach((b) =>
     b.addEventListener("click", () => jumpToDay(parseInt(b.dataset.offset ?? "0", 10))),
   );
@@ -919,16 +910,22 @@ function daySummary(key: string): { band: string; best: string; hi: number; lo: 
 
 function renderTrends(): void {
   const el = $("#trends");
+  const rail = $("#wa-rail");
   if (!state.place) {
+    rail.innerHTML = "";
     el.innerHTML = skTrendsHtml("Trends appear once a location is chosen above.");
     return;
   }
   const target = currentTarget();
   if (!target) {
     // #24: Trends is gated the same way as the planner.
+    rail.innerHTML = "";
     el.innerHTML = skTrendsHtml("Pick a target to see best times.");
     return;
   }
+  // #72: the pill card under the toggle (wide widths; CSS hides it
+  // below 75em, where the day detail carries the block instead).
+  rail.innerHTML = waPillsHtml();
   const start = startKey();
   const blocks: string[] = [];
   const weekPlans: { key: string; plan: DayPlan }[] = [];
@@ -1088,6 +1085,10 @@ function render(): void {
   $("#plan-side").hidden = !planner;
   $("#plan-cards").hidden = !planner;
   $("#trends").hidden = planner;
+  // #72: the Trends rail pill card lives under the view toggle and
+  // belongs to the Trends view only; renderTrends fills it.
+  $("#wa-rail").hidden = planner;
+  closeWaBalloon();
   if (planner) renderPlanner();
   else renderTrends();
   fitActionButtons();
@@ -1095,20 +1096,17 @@ function render(): void {
 
 // ------------------------------------------------------------- day modal
 
-/** #69 (layout E1, Wade's pick): the day detail's "Water & air" block.
- *  Collapsed by default — the header row carries the worst status, so
- *  no warning is ever hidden — and tapping it expands the full
- *  per-signal list in place, flagged rows first. Today's detail only:
- *  the signals are current conditions, not a forecast. The veto and
- *  banner lines live above the block as before; this block is the
- *  detail and the sources behind them. */
-function envBlockHtml(): string {
+/** #72: the sorted signal rows behind every Water & air surface —
+ *  the in-flow block, the wide rail pills and the pill balloon all
+ *  read this one list, so the presentations can never disagree.
+ *  Red tide and the USGS gauge are fetched outside env.ts; their
+ *  rows are spliced in here, in the Sheet D order (red tide after
+ *  beach bacteria, gauge after shellfish). Flagged rows sort first:
+ *  veto, then caution, then clear, then not-checked. */
+function envRows(): EnvSignal[] {
   const env = state.env;
-  if (!env || !state.place) return "";
+  if (!env || !state.place) return [];
   const rows: EnvSignal[] = [...env.signals];
-  // Red tide and the USGS gauge are fetched outside env.ts; splice
-  // their rows in here, in the Sheet D order (red tide after beach
-  // bacteria, gauge after shellfish).
   const { lat, lon } = state.place;
   if (lat >= 24 && lat <= 31.5 && lon >= -88.5 && lon <= -79.5) {
     const rt: EnvSignal = state.habVeto
@@ -1135,39 +1133,217 @@ function envBlockHtml(): string {
       rows.splice(at === -1 ? rows.length : at, 0, gauge);
     }
   }
-  if (!rows.length) return "";
   const rank = { veto: 0, caution: 1, ok: 2, na: 3 } as const;
   rows.sort((a, b) => rank[a.status] - rank[b.status]);
+  return rows;
+}
+
+/** The worst-status summary line, shared by the in-flow block's
+ *  header and the rail pill card's header. */
+function envSummary(rows: EnvSignal[]): { text: string; cls: string } {
   const vetoes = rows.filter((r) => r.status === "veto").length;
   const cautions = rows.filter((r) => r.status === "caution").length;
   const checked = rows.some((r) => r.status !== "na");
-  const sum = vetoes
+  return vetoes
     ? { text: "Don't go", cls: "bad" }
     : cautions
       ? { text: `${cautions} caution${cautions === 1 ? "" : "s"}`, cls: "warn" }
       : checked
         ? { text: "All clear", cls: "ok" }
         : { text: "Couldn't check", cls: "na" };
+}
+
+/** #69 (layout E1, Wade's pick): the "Water & air" block. Collapsed
+ *  by default — the header row carries the worst status, so no
+ *  warning is ever hidden — and tapping it expands the full
+ *  per-signal list in place, flagged rows first. Today's conditions
+ *  only: the signals are current conditions, not a forecast. The
+ *  veto and banner lines live above the block as before; this block
+ *  is the detail and the sources behind them. #72: the same block
+ *  now also renders in the Planner (class wa-flow); CSS hides the
+ *  in-flow copy at wide widths, where the rail pills take over. */
+function envBlockHtml(extraCls = ""): string {
+  const env = state.env;
+  if (!env || !state.place) return "";
+  const rows = envRows();
+  if (!rows.length) return "";
+  const sum = envSummary(rows);
   const checkedAt = new Date(env.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   return `
-    <div class="wa-block">
+    <div class="wa-block${extraCls ? ` ${extraCls}` : ""}">
       <button type="button" class="wa-head" aria-expanded="false">
         <span class="wa-title">Water &amp; air</span>
         <span class="wa-sum ${sum.cls}">${sum.text}</span>
         <span class="wa-chev" aria-hidden="true">▾</span>
       </button>
       <div class="wa-body" hidden>
-        ${rows
-          .map(
-            (r) => `<div class="wa-row">
-              <span class="wa-dot ${r.status}"></span>
-              <span class="wa-main"><strong>${esc(r.label)}</strong> — ${esc(r.text)} <span class="wa-src">${esc(r.source)}</span></span>
-            </div>`,
-          )
-          .join("")}
+        ${rows.map((r) => `<div class="wa-row"><span class="wa-dot ${r.status}"></span><span><strong>${esc(r.label)}</strong> — ${esc(r.text)} <span class="wa-src">${esc(r.source)}</span></span></div>`).join("")}
         <p class="wa-note">Checked ${checkedAt}. Sample-based checks can lag the water itself — when in doubt, trust your eyes and local notices.</p>
       </div>
     </div>`;
+}
+
+/** #72: the Planner's slim block for a FUTURE day. The hazard feeds
+ *  describe today only, so a future day shows just its air-quality
+ *  forecast (when AirNow/Open-Meteo has one) plus a pointer to
+ *  today's view for the rest. */
+function envSlimHtml(key: string): string {
+  const env = state.env;
+  if (!env || !state.place) return "";
+  const aqi = env.aqiByDay[key];
+  const row =
+    typeof aqi === "number"
+      ? `<div class="wa-row"><span class="wa-dot ${aqi > 100 ? "caution" : "ok"}"></span><span><strong>Air quality</strong> — Forecast AQI ${aqi} (${esc(aqiCategoryName(aqi))}) for ${esc(fmtDay(key))}. <span class="wa-src">AirNow / Open-Meteo</span></span></div>`
+      : "";
+  return `
+    <div class="wa-block wa-flow">
+      <button type="button" class="wa-head" aria-expanded="false">
+        <span class="wa-title">Water &amp; air</span>
+        <span class="wa-sum na">Air forecast only</span>
+        <span class="wa-chev" aria-hidden="true">▾</span>
+      </button>
+      <div class="wa-body" hidden>
+        ${row}
+        <p class="wa-note">Spill, bacteria, bloom, fire and shellfish checks describe today only — they are on today's view.</p>
+      </div>
+    </div>`;
+}
+
+/** Category word for an AQI value (the env.ts copy is module-local;
+ *  this one serves the slim block and the balloon). */
+function aqiCategoryName(aqi: number): string {
+  if (aqi <= 50) return "Good";
+  if (aqi <= 100) return "Moderate";
+  if (aqi <= 150) return "Unhealthy for sensitive groups";
+  if (aqi <= 200) return "Unhealthy";
+  if (aqi <= 300) return "Very unhealthy";
+  return "Hazardous";
+}
+
+/** #72: which Water & air surface the Planner shows for a day —
+ *  today gets the full block, a future day the slim forecast block,
+ *  and before the first assessment lands there is nothing. */
+function waFlowHtml(key: string): string {
+  if (!state.env || !state.place) return "";
+  return key === startKey() ? envBlockHtml("wa-flow") : envSlimHtml(key);
+}
+
+/** #72 (Sheets I/J, Wade's spec): the wide-screen pill card. Each
+ *  pill is a status dot, a short family name and ONE short value in
+ *  the status colour; pills flow left to right in the rail. Tapping
+ *  one opens the balloon (below) with the full sentence. */
+const PILL_NAMES: Record<string, string> = {
+  air: "Air quality",
+  spill: "Spills",
+  beach: "Beach bacteria",
+  bloom: "Blooms",
+  bacteria: "Bacteria",
+  shellfish: "Shellfish",
+  fires: "Fires",
+  attains: "Long-term",
+  redtide: "Red tide",
+  gauge: "Gauge",
+};
+
+function pillValue(r: EnvSignal): string {
+  const m = (re: RegExp) => r.text.match(re)?.[1];
+  switch (r.id) {
+    case "air": return m(/AQI (\d+)/) ?? "—";
+    case "beach": return m(/(\d+) per 100 mL/) ?? (r.status === "ok" ? "Clear" : "—");
+    case "gauge": return m(/water (\d+)°F/) ? `${m(/water (\d+)°F/)}°F` : "—";
+    case "shellfish": return r.status === "caution" ? "Closed" : "Open";
+    case "fires": return r.status === "caution" ? (m(/(\d+) satellite fire detection/) ?? "Fire") : r.status === "ok" ? "None" : "—";
+    case "spill": return r.status === "veto" ? "Veto" : r.status === "caution" ? "Near" : r.status === "ok" ? "None" : "—";
+    case "bloom": return r.status === "veto" ? "Toxin" : r.status === "caution" ? "Bloom" : r.status === "ok" ? "None" : "—";
+    case "bacteria": return r.status === "caution" ? "Over" : r.status === "ok" ? "Clear" : "—";
+    case "attains": return r.status === "na" ? "—" : /^\d+ of \d+/.test(r.text) ? "Impaired" : "Good";
+    case "redtide": return r.status === "veto" ? "Veto" : "None";
+    default: return r.status === "ok" ? "Clear" : "—";
+  }
+}
+
+function waPillsHtml(): string {
+  const env = state.env;
+  if (!env || !state.place) return "";
+  const rows = envRows();
+  if (!rows.length) return "";
+  const sum = envSummary(rows);
+  const checkedAt = new Date(env.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return `
+    <div class="acard wa-card">
+      <h4>Water &amp; air <span class="wa-sum ${sum.cls}">${sum.text}</span></h4>
+      <div class="wa-pills">
+        ${rows.map((r) => `<button type="button" class="wa-pill" data-wa-id="${r.id}" aria-haspopup="true"><span class="wa-dot ${r.status}"></span><span class="pname">${esc(PILL_NAMES[r.id] ?? r.label)}</span><span class="pval ${r.status}">${esc(pillValue(r))}</span></button>`).join("")}
+      </div>
+      <p class="note">Checked ${checkedAt} · tap a pill for details</p>
+    </div>`;
+}
+
+/* #72 (Sheet J): the pill detail balloon — a comic-style speech
+ * bubble that floats OVER the page, anchored to the tapped pill
+ * with its tail pointing at it. It reflows nothing. The ✕, a tap
+ * anywhere off it, Esc, scroll or resize closes it; tapping another
+ * pill moves it. Near the screen bottom it flips above the pill
+ * (the #35/#59 flip rule). One shared element in index.html. */
+let waBalloonId: string | null = null;
+
+function closeWaBalloon(): void {
+  const b = $("#wa-balloon");
+  if (b) b.hidden = true;
+  waBalloonId = null;
+  document.querySelectorAll<HTMLElement>(".wa-pill.sel").forEach((p) => p.classList.remove("sel"));
+}
+
+function openWaBalloon(anchor: HTMLElement, id: string): void {
+  const row = envRows().find((r) => r.id === id);
+  const b = $("#wa-balloon");
+  if (!row || !b || !state.env) return;
+  const checkedAt = new Date(state.env.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  b.innerHTML = `
+    <button type="button" class="wa-x" aria-label="Close">✕</button>
+    <div class="wa-b-title"><span class="wa-dot ${row.status}"></span>${esc(row.label)}</div>
+    <p class="wa-b-text">${esc(row.text)}</p>
+    <p class="wa-b-src">${esc(row.source)} · checked ${checkedAt}</p>`;
+  b.querySelector<HTMLElement>(".wa-x")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeWaBalloon();
+  });
+  document.querySelectorAll<HTMLElement>(".wa-pill.sel").forEach((p) => p.classList.remove("sel"));
+  anchor.classList.add("sel");
+  waBalloonId = id;
+  b.hidden = false;
+  // Anchor under the pill, clamped to the viewport; flip above when
+  // the space below runs out. The tail keeps pointing at the pill's
+  // centre via the --tail-x custom property.
+  const r = anchor.getBoundingClientRect();
+  const W = 252;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8));
+  b.style.left = `${left}px`;
+  b.style.setProperty("--tail-x", `${Math.max(18, Math.min(r.left + r.width / 2 - left, W - 18))}px`);
+  const h = b.offsetHeight || 120;
+  if (r.bottom + 12 + h > window.innerHeight - 8 && r.top - 12 - h >= 8) {
+    b.style.top = `${r.top - 12 - h}px`;
+    b.classList.add("flip");
+  } else {
+    b.style.top = `${r.bottom + 12}px`;
+    b.classList.remove("flip");
+  }
+}
+
+/** #72: the in-flow block's expand/collapse wiring, shared by the
+ *  day detail and the Planner copy. Starts collapsed on every
+ *  render (no persistence), as in the shipped E1 block. */
+function wireWaBlockIn(root: ParentNode): void {
+  const waHead = root.querySelector<HTMLElement>(".wa-head");
+  if (!waHead) return;
+  waHead.addEventListener("click", () => {
+    const body = root.querySelector<HTMLElement>(".wa-body");
+    if (!body) return;
+    body.hidden = !body.hidden;
+    waHead.setAttribute("aria-expanded", String(!body.hidden));
+    const chev = waHead.querySelector(".wa-chev");
+    if (chev) chev.textContent = body.hidden ? "▾" : "▴";
+  });
 }
 
 /** Full day detail markup — shared by the modal (narrow widths) and the
@@ -1248,18 +1424,9 @@ function wireDayDetail(root: HTMLElement, key: string): void {
     });
   wireSlotIcs(root, exportDayFor(key));
   wireBadgeLinks(root, exportDayFor(key));
-  // #69 (E1): the Water & air header expands/collapses its body in
-  // place; it starts collapsed on every open (no persistence).
-  const waHead = root.querySelector<HTMLElement>(".wa-head");
-  if (waHead)
-    waHead.addEventListener("click", () => {
-      const body = root.querySelector<HTMLElement>(".wa-body");
-      if (!body) return;
-      body.hidden = !body.hidden;
-      waHead.setAttribute("aria-expanded", String(!body.hidden));
-      const chev = waHead.querySelector(".wa-chev");
-      if (chev) chev.textContent = body.hidden ? "▾" : "▴";
-    });
+  // #69 (E1) / #72: the Water & air header expands/collapses its
+  // body in place; shared wiring with the Planner copy.
+  wireWaBlockIn(root);
   const badgeBtn = root.querySelector<HTMLElement>(".badge-this-day");
   if (badgeBtn)
     badgeBtn.addEventListener("click", (e) => {
@@ -1333,6 +1500,10 @@ const INFO_HTML = `
   (NASA FIRMS), or a closed Florida shellfish area (FDACS). At <strong>AQI 151+</strong> the
   banner shows and every hour's score drops by 10. Each family can be switched off under
   Settings → Environmental data; red tide and dangerous wind always apply.</p>
+  <p>One more row is background only: <strong>long-term water notes</strong> (EPA ATTAINS)
+  summarise how the waters in your watershed fared in the states' long-term impairment
+  assessments. They describe the watershed's record, not today's water, and never change
+  a rating.</p>
   <p class="note">Water temperature comes from a nearby USGS gauge when one is reporting;
   otherwise fish bands use air temperature as a labelled proxy. Rut windows for deer come from
   state-published peak-breeding data (AL/FL/GA/MS/TX) and are approximate — Tennessee publishes
@@ -2291,7 +2462,16 @@ function aboutHtml(version: string): string {
     ${link("https://opentopomap.org/", "OpenTopoMap", "topographic base map")}
     ${link("https://leafletjs.com/", "Leaflet", "map library")}
     ${link("https://www.zippopotam.us/", "Zippopotam.us", "ZIP code lookups")}
+    ${link("https://www.airnow.gov/", "AirNow", "air quality (EPA AirNow program and partner agencies)")}
+    ${link("https://firms.modaps.eosdis.nasa.gov/", "NASA FIRMS", "satellite fire detections")}
+    ${link("https://www.epa.gov/cyan/", "EPA CyAN", "lake bloom satellite index")}
+    ${link("https://www.waterqualitydata.us/", "Water Quality Portal", "bacteria samples (USGS/EPA and contributing agencies)")}
+    ${link("https://floridadep.gov/", "Florida DEP", "pollution notices &amp; algal bloom sampling")}
+    ${link("https://adem.alabama.gov/", "Alabama ADEM", "sewer overflow reports")}
+    ${link("https://www.fdacs.gov/", "Florida FDACS", "shellfish harvest area status")}
+    ${link("https://www.epa.gov/waterdata/attains", "EPA ATTAINS", "long-term water quality assessments")}
   </ul>
+  <p class="note">Air quality data are preliminary and subject to change. Fire detections: we acknowledge the use of data from NASA's FIRMS, part of NASA's Earth Science Data and Information System (ESDIS).</p>
   <p class="disclaimer">${esc(DISCLAIMER)}</p>`;
 }
 
@@ -2848,8 +3028,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
   // #35: an open menu closes when the page scrolls or resizes (the
   // button it hangs from has moved).
-  window.addEventListener("scroll", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); }, { passive: true });
-  window.addEventListener("resize", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); fitActionButtons(); if (tourActive) layoutTour(false); });
+  window.addEventListener("scroll", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); closeWaBalloon(); }, { passive: true });
+  window.addEventListener("resize", () => { closeInfoMenu(); closePrintMenu(); closeBadgeMenu(); closeWaBalloon(); fitActionButtons(); if (tourActive) layoutTour(false); });
   // #68: the tour can start before the brand lockup image loads, and
   // the header grows when it lands — re-measure once everything has
   // loaded so the ring sits on the real part, not its pre-load spot.
@@ -2878,6 +3058,23 @@ window.addEventListener("DOMContentLoaded", async () => {
     doPrint("month");
   });
   document.addEventListener("click", (e) => {
+    // #72: pill taps toggle/move the balloon; a tap inside the
+    // balloon (other than its ✕, which handles itself) keeps it
+    // open; any other tap closes it.
+    const balloon = $("#wa-balloon");
+    if (balloon && !balloon.hidden) {
+      const pill = (e.target as HTMLElement).closest<HTMLElement>(".wa-pill");
+      if (pill) {
+        const id = pill.dataset.waId ?? "";
+        if (waBalloonId === id) closeWaBalloon();
+        else openWaBalloon(pill, id);
+      } else if (!balloon.contains(e.target as Node)) {
+        closeWaBalloon();
+      }
+    } else {
+      const pill = (e.target as HTMLElement).closest<HTMLElement>(".wa-pill");
+      if (pill) openWaBalloon(pill, pill.dataset.waId ?? "");
+    }
     const menu = $("#info-menu");
     if (!menu.hidden && !menu.contains(e.target as Node)) closeInfoMenu();
     const pmenu = $("#print-menu");
@@ -2928,6 +3125,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (e.key !== "Escape") return;
     if (tourActive) {
       endTour();
+      return;
+    }
+    if ($("#wa-balloon") && !$("#wa-balloon").hidden) {
+      closeWaBalloon();
       return;
     }
     if ($("#badge-menu") && !$("#badge-menu").hidden) {
@@ -3048,7 +3249,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.7.0";
+  let versionLabel = "Zero Light 0.8.0";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.
