@@ -2084,6 +2084,147 @@ try {
     await ctx.close();
   }
   {
+    // #73: progressive loading. The ATTAINS route is held back
+    // 2.5 s while every other family answers at once: the Water &
+    // air block must appear in its "Checking…" state (never "All
+    // clear"), then fill in when the slow answer lands.
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1");
+    });
+    const p = await ctx.newPage();
+    await envRoutes(p, { covered: true, notices: [] }, { source: "airnow", current: { aqi: 42 }, daily: [{ date: dateStr(new Date()), aqi: 42 }] });
+    await p.route("**workers.dev/attains**", async (route) => {
+      await new Promise((r) => setTimeout(r, 2500));
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ huc: "031401050401", watershed: "Test Watershed", totalUnits: 4, impairedUnits: 0, goodUnits: 3, notAssessedUnits: 1, causes: [] }),
+      });
+    });
+    await pickTampaRedfish(p);
+    await p.waitForFunction(
+      () => document.querySelector("#planner .wa-sum")?.textContent?.includes("Checking"),
+      null,
+      { timeout: 20000 },
+    );
+    check("#73 the block shows Checking… while a family is still loading", true);
+    check(
+      "#73 the day never claims All clear early",
+      !((await p.textContent("#planner .wa-sum")) ?? "").includes("All clear"),
+    );
+    await p.evaluate(() => document.querySelector("#planner .wa-head")?.click());
+    check(
+      "#73 a pending row reads Checking…",
+      (await p.locator("#planner .wa-row.pend").count()) >= 1 &&
+        ((await p.textContent("#planner .wa-body")) ?? "").includes("Checks still running"),
+    );
+    await p.waitForFunction(
+      () =>
+        (document.querySelector("#planner .wa-body")?.textContent ?? "").includes("Long-term water notes") &&
+        !(document.querySelector("#planner .wa-sum")?.textContent ?? "").includes("Checking"),
+      null,
+      { timeout: 20000 },
+    );
+    check("#73 the slow family fills in and the summary settles", true);
+    check(
+      "#73 no pending rows remain once every family has answered",
+      (await p.locator("#planner .wa-row.pend").count()) === 0,
+    );
+    check(
+      "#73 the loaded pill card footer uses the condition wording",
+      ((await p.textContent("#plan-cards")) ?? "").includes("Tap a condition to open its details"),
+    );
+    await ctx.close();
+  }
+  {
+    // #74: a red tide veto names its triggering sample. The FWC
+    // fixture is one HIGH sample 4 days old near Tampa.
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1");
+    });
+    const p = await ctx.newPage();
+    await envRoutes(p, { covered: true, notices: [] }, { source: "airnow", current: { aqi: 42 }, daily: [{ date: dateStr(new Date()), aqi: 42 }] });
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const d4 = new Date(Date.now() - 4 * 86400_000);
+    const sampleDate = `${months[d4.getMonth()]} ${d4.getDate()} ${d4.getFullYear()}`;
+    await p.route("**gis.myfwc.com**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          features: [
+            {
+              attributes: {
+                Abundance: "high (>1,000,000)",
+                LOCATION: "Hillsborough Bay",
+                SampleDate_t: sampleDate,
+                LATITUDE: 27.9606,
+                LONGITUDE: -82.4602,
+              },
+            },
+          ],
+        }),
+      }),
+    );
+    await pickTampaRedfish(p);
+    await p.waitForFunction(
+      () => (document.querySelector("#planner")?.textContent ?? "").includes("Karenia brevis at high concentration"),
+      null,
+      { timeout: 20000 },
+    );
+    const plannerText = (await p.textContent("#planner")) ?? "";
+    check("#74 the veto names the sample place", plannerText.includes("Hillsborough Bay"));
+    check("#74 the veto carries the cell count", plannerText.includes("(>1,000,000 cells/L)"));
+    check("#74 the veto carries the sample age", plannerText.includes("days ago"));
+    check("#74 the veto carries the distance", /\d+ km away/.test(plannerText));
+    await p.evaluate(() => document.querySelector("#planner .wa-head")?.click());
+    const waText = (await p.textContent("#planner .wa-body")) ?? "";
+    check("#74 the block row carries the same evidence", waText.includes("Red tide") && waText.includes("sampled at Hillsborough Bay"));
+    await ctx.close();
+  }
+  {
+    // #74: on a clear day the red tide row names the newest sample
+    // it saw, instead of a bare "no red tide detected".
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1");
+    });
+    const p = await ctx.newPage();
+    await envRoutes(p, { covered: true, notices: [] }, { source: "airnow", current: { aqi: 42 }, daily: [{ date: dateStr(new Date()), aqi: 42 }] });
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const d2 = new Date(Date.now() - 2 * 86400_000);
+    const sampleDate = `${months[d2.getMonth()]} ${d2.getDate()} ${d2.getFullYear()}`;
+    await p.route("**gis.myfwc.com**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          features: [
+            {
+              attributes: {
+                Abundance: "not present/background (0-1,000)",
+                LOCATION: "Davis Island",
+                SampleDate_t: sampleDate,
+                LATITUDE: 27.9206,
+                LONGITUDE: -82.4502,
+              },
+            },
+          ],
+        }),
+      }),
+    );
+    await pickTampaRedfish(p);
+    await p.waitForFunction(
+      () => (document.querySelector("#planner")?.textContent ?? "").includes("Latest sample at Davis Island"),
+      null,
+      { timeout: 20000 },
+    );
+    check("#74 a clear red tide row names the latest sample", true);
+    await ctx.close();
+  }
+  {
     // #69: tour stop 6 now names the environmental data choices.
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const p = await ctx.newPage();

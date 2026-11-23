@@ -865,11 +865,56 @@ async function wqpLatest(characteristic, clat, clon) {
   return [...byStation.values()];
 }
 
+/** Item #73: stale-while-revalidate for the one slow feed. The
+ *  Water Quality Portal takes ~25 s on a cold cache; with a usable
+ *  saved copy (fresh, or stale inside the grace) the caller gets it
+ *  immediately and the refresh runs behind via waitUntil, so only
+ *  the first-ever request for a cell pays the wait. A short-lived
+ *  marker entry keeps simultaneous callers from all refreshing at
+ *  once. With no usable copy the loader is awaited, as before. */
+async function cachedRawSwr(env, ctx, key, ttlSec, graceSec, loader) {
+  const now = Math.floor(Date.now() / 1000);
+  const entry = await getEntry(env, key).catch(() => null);
+  let stale = null;
+  if (entry) {
+    try {
+      stale = JSON.parse(entry.body);
+    } catch {
+      stale = null;
+    }
+  }
+  if (entry && entry.expires_at > now && stale !== null) return stale;
+  if (stale !== null && entry && entry.expires_at > now - graceSec) {
+    const marker = await getEntry(env, `swr:${key}`).catch(() => null);
+    if (!marker) {
+      ctx.waitUntil(
+        (async () => {
+          await putEntry(env, `swr:${key}`, "1", 180).catch(() => {});
+          const v = await loader().catch(() => null);
+          if (v !== null && v !== undefined) {
+            await putEntry(env, key, JSON.stringify(v), ttlSec).catch(() => {});
+          }
+        })(),
+      );
+    }
+    return stale;
+  }
+  const value = await loader().catch(() => null);
+  if (value !== null && value !== undefined) {
+    ctx.waitUntil(putEntry(env, key, JSON.stringify(value), ttlSec));
+    return value;
+  }
+  return null;
+}
+
 async function handleWqp(request, env, ctx, url) {
   const ll = parseLatLon(url);
   if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
   const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
-  const value = await cachedRaw(env, ctx, `wqp1:${cellLat}:${cellLon}`, 86400, 86400, async () => {
+  // #73: 24 h fresh, then up to 7 days stale-while-revalidate —
+  // bacteria samples are posted days late anyway, so a day-old copy
+  // costs nothing in accuracy and saves the ~25 s cold fetch.
+  const value = await cachedRawSwr(env, ctx, `wqp1:${cellLat}:${cellLon}`, 86400, 7 * 86400, async () => {
     const [entero, ecoli] = await Promise.all([
       wqpLatest("Enterococcus", cellLat, cellLon),
       wqpLatest("Escherichia coli", cellLat, cellLon),

@@ -32,7 +32,7 @@ import type { TargetKind } from "./scoring";
 export interface EnvSignal {
   id: EnvFamilyId | "redtide" | "gauge";
   label: string;
-  status: "ok" | "caution" | "veto" | "na";
+  status: "ok" | "caution" | "veto" | "na" | "pend";
   text: string;
   source: string;
 }
@@ -61,6 +61,11 @@ export interface EnvAssessment {
   /** Location-local date key → that day's max AQI (today's entry is
    *  the higher of the current reading and today's forecast). */
   aqiByDay: Record<string, number>;
+  /** Item #73: families still being fetched when this assessment
+   *  was published (progressive loading). Empty on the final
+   *  assessment. The UI renders these as "Checking…" rows/pills and
+   *  never calls the day all-clear while the list is non-empty. */
+  pending: EnvFamilyId[];
 }
 
 const FISHING: TargetKind[] = ["saltwater", "freshwater"];
@@ -390,6 +395,14 @@ function validateAttains(d: unknown): AttainsData | null {
  * to one assessment. `placeLabel` is used only to match Florida
  * shellfish area names against the chosen place (e.g. an area called
  * "Pensacola Bay" for a place labelled Pensacola).
+ *
+ * Item #73: the families do not wait for each other. Each family's
+ * answer publishes a partial assessment through `onPartial` the
+ * moment it lands — the day renders and acts on what it has (a
+ * landed veto applies at once) while the slow families (the Water
+ * Quality Portal can take ~25 s on a cold server cache) are still
+ * running. A partial assessment names its unfinished families in
+ * `pending`; the returned promise resolves with the final one.
  */
 export async function fetchEnvAssessment(
   lat: number,
@@ -397,36 +410,91 @@ export async function fetchEnvAssessment(
   env: EnvSettings,
   placeLabel: string,
   force = false,
+  onPartial?: (a: EnvAssessment) => void,
 ): Promise<EnvAssessment> {
   const on = (id: EnvFamilyId) => env[id];
-  const [air, cyan, spill, habState, wqp, firms, shellfish, attains] = await Promise.all([
-    on("air")
-      ? workerFamily("air", lat, lon, TTL.envAirMs, force, validateAir)
-      : Promise.resolve(null),
-    on("bloom")
-      ? workerFamily("cyan", lat, lon, TTL.envCyanMs, force, validateCyan)
-      : Promise.resolve(null),
-    on("spill")
-      ? workerFamily("spill", lat, lon, TTL.envSpillMs, force, (d) => validateSpill(d, lat, lon))
-      : Promise.resolve(null),
-    on("bloom")
-      ? workerFamily("habstate", lat, lon, TTL.envHabStateMs, force, (d) =>
-          validateHabState(d, lat, lon),
-        )
-      : Promise.resolve(null),
-    on("beach") || on("bacteria")
-      ? workerFamily("wqp", lat, lon, TTL.envWqpMs, force, (d) => validateWqp(d, lat, lon))
-      : Promise.resolve(null),
-    on("fires")
-      ? workerFamily("firms", lat, lon, TTL.envFirmsMs, force, (d) => validateFirms(d, lat, lon))
-      : Promise.resolve(null),
-    on("shellfish")
-      ? workerFamily("shellfish", lat, lon, TTL.envShellfishMs, force, validateShellfish)
-      : Promise.resolve(null),
-    on("attains")
-      ? workerFamily("attains", lat, lon, TTL.envAttainsMs, force, validateAttains)
-      : Promise.resolve(null),
-  ]);
+  // The eight upstream fetches, in the order the original Promise.all
+  // listed them. A slot is undefined until its fetch settles, then
+  // holds the validated data (or null — failed / switched off).
+  const slots: (unknown | null | undefined)[] = Array(8).fill(undefined);
+  const fetches: [number, Promise<unknown | null>][] = [
+    [0, on("air") ? workerFamily("air", lat, lon, TTL.envAirMs, force, validateAir) : Promise.resolve(null)],
+    [1, on("bloom") ? workerFamily("cyan", lat, lon, TTL.envCyanMs, force, validateCyan) : Promise.resolve(null)],
+    [2, on("spill") ? workerFamily("spill", lat, lon, TTL.envSpillMs, force, (d) => validateSpill(d, lat, lon)) : Promise.resolve(null)],
+    [3, on("bloom") ? workerFamily("habstate", lat, lon, TTL.envHabStateMs, force, (d) => validateHabState(d, lat, lon)) : Promise.resolve(null)],
+    [4, on("beach") || on("bacteria") ? workerFamily("wqp", lat, lon, TTL.envWqpMs, force, (d) => validateWqp(d, lat, lon)) : Promise.resolve(null)],
+    [5, on("fires") ? workerFamily("firms", lat, lon, TTL.envFirmsMs, force, (d) => validateFirms(d, lat, lon)) : Promise.resolve(null)],
+    [6, on("shellfish") ? workerFamily("shellfish", lat, lon, TTL.envShellfishMs, force, validateShellfish) : Promise.resolve(null)],
+    [7, on("attains") ? workerFamily("attains", lat, lon, TTL.envAttainsMs, force, validateAttains) : Promise.resolve(null)],
+  ];
+  // Which toggle families each unsettled slot is holding up. The
+  // bloom family reads two feeds (cyan + habstate); the WQP feed
+  // serves both bacteria toggles.
+  const pendingFor = (): EnvFamilyId[] => {
+    const p: EnvFamilyId[] = [];
+    if (slots[0] === undefined && on("air")) p.push("air");
+    if ((slots[1] === undefined || slots[3] === undefined) && on("bloom")) p.push("bloom");
+    if (slots[2] === undefined && on("spill")) p.push("spill");
+    if (slots[4] === undefined && on("beach")) p.push("beach");
+    if (slots[4] === undefined && on("bacteria")) p.push("bacteria");
+    if (slots[5] === undefined && on("fires")) p.push("fires");
+    if (slots[6] === undefined && on("shellfish")) p.push("shellfish");
+    if (slots[7] === undefined && on("attains")) p.push("attains");
+    return p;
+  };
+  const build = (): EnvAssessment =>
+    buildAssessment(env, placeLabel, {
+      air: slots[0] as AirData | null | undefined,
+      cyan: slots[1] as CyanData | null | undefined,
+      spill: slots[2] as SpillData | null | undefined,
+      habState: slots[3] as BloomSample[] | null | undefined,
+      wqp: slots[4] as WqpData | null | undefined,
+      firms: slots[5] as FireHit[] | null | undefined,
+      shellfish: slots[6] as ShellfishData | null | undefined,
+      attains: slots[7] as AttainsData | null | undefined,
+    }, pendingFor());
+  let settled = 0;
+  await Promise.all(
+    fetches.map(([i, pr]) =>
+      pr.then((v) => {
+        slots[i] = v;
+        settled += 1;
+        if (settled < fetches.length) onPartial?.(build());
+      }),
+    ),
+  );
+  return build();
+}
+
+/** Boil one set of family answers (some possibly still missing —
+ *  undefined — on a partial publish) into an assessment. Signals
+ *  belonging to pending families are dropped here; the UI draws
+ *  "Checking…" placeholders for them from `pending` instead, so a
+ *  family that has not answered can never read as checked. */
+function buildAssessment(
+  env: EnvSettings,
+  placeLabel: string,
+  data: {
+    air: AirData | null | undefined;
+    cyan: CyanData | null | undefined;
+    spill: SpillData | null | undefined;
+    habState: BloomSample[] | null | undefined;
+    wqp: WqpData | null | undefined;
+    firms: FireHit[] | null | undefined;
+    shellfish: ShellfishData | null | undefined;
+    attains: AttainsData | null | undefined;
+  },
+  pending: EnvFamilyId[],
+): EnvAssessment {
+  const on = (id: EnvFamilyId) => env[id];
+  const air = data.air ?? null;
+  const cyan = data.cyan ?? null;
+  const spill = data.spill ?? null;
+  const habState = data.habState ?? null;
+  const wqp = data.wqp ?? null;
+  const firms = data.firms ?? null;
+  const shellfish = data.shellfish ?? null;
+  const attains = data.attains ?? null;
 
   const signals: EnvSignal[] = [];
   const vetoes: EnvVeto[] = [];
@@ -549,25 +617,25 @@ export async function fetchEnvAssessment(
           kinds: ["saltwater"],
           text:
             `bacteria at advisory level near this beach — ${advisory.stationName} sampled ` +
-            `${Math.round(advisory.value)} per 100 mL on ${fmtDateKey(advisory.date)} (EPA advisory criterion: 104)`,
+            `${Math.round(advisory.value)} per 100 mL on ${fmtDateKey(advisory.date)}, ${advisory.distKm.toFixed(0)} km away (EPA advisory criterion: 104)`,
         });
         signals.push({
           id: "beach",
           label: "Beach bacteria",
           status: "veto",
-          text: `Advisory-level sample at ${advisory.stationName} — ${Math.round(advisory.value)} per 100 mL, ${fmtDateKey(advisory.date)}.`,
+          text: `Advisory-level sample at ${advisory.stationName} — ${Math.round(advisory.value)} per 100 mL, ${fmtDateKey(advisory.date)}, ${advisory.distKm.toFixed(0)} km away.`,
           source: advisory.org || "Water Quality Portal",
         });
       } else if (elevatedFar) {
         cautions.push({
           kinds: ["saltwater"],
-          text: `bacteria sample above the safe limit at ${elevatedFar.stationName} (${fmtDateKey(elevatedFar.date)})`,
+          text: `bacteria sample above the safe limit at ${elevatedFar.stationName} (${fmtDateKey(elevatedFar.date)}, ${elevatedFar.distKm.toFixed(0)} km away)`,
         });
         signals.push({
           id: "beach",
           label: "Beach bacteria",
           status: "caution",
-          text: `Sample above the safe limit at ${elevatedFar.stationName} — ${Math.round(elevatedFar.value)} per 100 mL, ${fmtDateKey(elevatedFar.date)}.`,
+          text: `Sample above the safe limit at ${elevatedFar.stationName} — ${Math.round(elevatedFar.value)} per 100 mL, ${fmtDateKey(elevatedFar.date)}, ${elevatedFar.distKm.toFixed(0)} km away.`,
           source: elevatedFar.org || "Water Quality Portal",
         });
       } else if (elevated) {
@@ -616,7 +684,7 @@ export async function fetchEnvAssessment(
         id: "bloom",
         label: "Algal blooms",
         status: "veto",
-        text: `Toxin found in a sample at ${toxinHit.site}${toxinHit.toxinText ? ` (${toxinHit.toxinText})` : ""}.`,
+        text: `Toxin found in a sample at ${toxinHit.site}${toxinHit.toxinText ? ` (${toxinHit.toxinText})` : ""}, sampled ${toxinHit.dateMs ? fmtDateMs(toxinHit.dateMs) : "recently"}.`,
         source: "FL DEP bloom sampling",
       });
     } else if (bloomHit) {
@@ -836,7 +904,14 @@ export async function fetchEnvAssessment(
     }
   }
 
-  return { fetchedAt: Date.now(), signals, vetoes, cautions, aqiByDay };
+  return {
+    fetchedAt: Date.now(),
+    signals: signals.filter((s) => !pending.includes(s.id as EnvFamilyId)),
+    vetoes,
+    cautions,
+    aqiByDay,
+    pending,
+  };
 }
 
 /** The air-quality caution phrase + score modifier for one day, from

@@ -182,7 +182,35 @@ async function fetchUsgsReadingDirect(
 const HAB_SERVICE =
   "https://gis.myfwc.com/mapping/rest/services/Projects_FWC/HAB_forDEP_Dashboard/MapServer/0/query";
 
-export async function fetchHabVeto(lat: number, lon: number, force = false): Promise<string | null> {
+/** One FWC sample, parsed from the feed's own fields (item #74 —
+ *  the veto used to keep only the word "high" and discard the
+ *  sample's place, date, count and distance; now the evidence is
+ *  carried through so the app can show it). */
+export interface HabSampleInfo {
+  place: string;
+  /** Sample date (ms since epoch); null when the feed's date text
+   *  could not be parsed. */
+  dateMs: number | null;
+  /** "high" | "medium" for veto-grade samples; "lower" otherwise. */
+  level: "high" | "medium" | "lower";
+  /** The feed's abundance text, e.g. "high (>1,000,000)". */
+  abundance: string;
+  distKm: number;
+}
+
+export interface HabInfo {
+  /** The worst medium/high sample in the feed's 40 km window —
+   *  the veto trigger. Samples with a parseable date older than
+   *  8 days do not veto (the rule the veto text has always
+   *  claimed); an unparseable date cannot prove a sample stale,
+   *  so it still counts. */
+  veto: HabSampleInfo | null;
+  /** The most recent sample of any level — the evidence behind a
+   *  clear red tide row. */
+  latest: HabSampleInfo | null;
+}
+
+export async function fetchHabVeto(lat: number, lon: number, force = false): Promise<HabInfo | null> {
   // The feed covers Florida waters only — skip the call elsewhere.
   if (lat < 24 || lat > 31.5 || lon < -88.5 || lon > -79.5) return null;
   try {
@@ -195,17 +223,46 @@ export async function fetchHabVeto(lat: number, lon: number, force = false): Pro
       TTL.habMs,
       { force },
     );
-    let worst: string | null = null;
+    const samples: HabSampleInfo[] = [];
     for (const f of res.data.features ?? []) {
       const attrs = f.attributes ?? {};
-      const text = Object.values(attrs).join(" ").toUpperCase();
-      if (/\bHIGH\b/.test(text)) worst = "high";
-      else if (/\bMEDIUM\b/.test(text) && worst !== "high") worst = "medium";
+      const abundance = typeof attrs.Abundance === "string" ? attrs.Abundance : "";
+      const level: HabSampleInfo["level"] = /^high/i.test(abundance)
+        ? "high"
+        : /^medium/i.test(abundance)
+          ? "medium"
+          : "lower";
+      const parsed = Date.parse(typeof attrs.SampleDate_t === "string" ? attrs.SampleDate_t.trim() : "");
+      const sLat = typeof attrs.LATITUDE === "number" ? attrs.LATITUDE : NaN;
+      const sLon = typeof attrs.LONGITUDE === "number" ? attrs.LONGITUDE : NaN;
+      samples.push({
+        place: typeof attrs.LOCATION === "string" && attrs.LOCATION ? attrs.LOCATION : "a nearby sampling site",
+        dateMs: Number.isFinite(parsed) ? parsed : null,
+        level,
+        abundance: abundance || "not reported",
+        distKm: Number.isFinite(sLat) && Number.isFinite(sLon) ? haversineKm(lat, lon, sLat, sLon) : NaN,
+      });
     }
-    if (worst) {
-      return `red tide — Karenia brevis at ${worst} concentration sampled near this location in the last 8 days (FWC-FWRI)`;
-    }
-    return null;
+    if (!samples.length) return { veto: null, latest: null };
+    const now = Date.now();
+    const fresh = (s: HabSampleInfo) => s.dateMs === null || now - s.dateMs <= 8 * 86400_000;
+    const rank = (s: HabSampleInfo) => (s.level === "high" ? 0 : 1);
+    const veto =
+      samples
+        .filter((s) => s.level !== "lower" && fresh(s))
+        .sort(
+          (a, b) =>
+            rank(a) - rank(b) ||
+            (b.dateMs ?? -Infinity) - (a.dateMs ?? -Infinity) ||
+            (Number.isFinite(a.distKm) ? a.distKm : Infinity) - (Number.isFinite(b.distKm) ? b.distKm : Infinity),
+        )[0] ?? null;
+    const latest =
+      [...samples].sort(
+        (a, b) =>
+          (b.dateMs ?? -Infinity) - (a.dateMs ?? -Infinity) ||
+          (Number.isFinite(a.distKm) ? a.distKm : Infinity) - (Number.isFinite(b.distKm) ? b.distKm : Infinity),
+      )[0] ?? null;
+    return { veto, latest };
   } catch {
     return null;
   }

@@ -872,3 +872,15 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
 @media print {
   .wa-balloon, .wa-card, #wa-rail { display: none !important; }
 }
+
+/* #73: Water & air loading states. A family still being checked
+   shows a hollow pulsing dot and muted text; its pill is a plain
+   span (not a button), so it cannot be tapped. The header summary
+   reads "Checking…" until every switched-on family has answered. */
+.wa-sum.checking { color: var(--muted); }
+.wa-dot.pend { background: transparent; border: 2px solid var(--muted); box-sizing: border-box; animation: wa-pulse 1.2s ease-in-out infinite; }
+.wa-row.pend { color: var(--muted); }
+.wa-pill.pend { cursor: default; opacity: 0.65; }
+.wa-pill .pval.pend { color: var(--muted); }
+@keyframes wa-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+@media print { .wa-pill.pend, .wa-row.pend { display: none; } }

@@ -152,6 +152,7 @@ import {
   rutForLocation,
   type UsgsReading,
   type PlaceCandidate,
+  type HabInfo,
 } from "./extras";
 import { downloadIcs, downloadSlotIcs, googleUrl, outlookUrl, type ExportDay } from "./calendar";
 import { buildPrintPdf, type PrintModel, type PrintSection } from "./printpdf";
@@ -193,12 +194,20 @@ const state = {
   tideStationId: "",
   tideStationName: "",
   usgs: undefined as UsgsReading | undefined,
-  habVeto: null as string | null,
+  // #74: the parsed FWC red tide result (worst sample + latest
+  // sample), from which the veto sentence and the block row are
+  // built. null until the fetch lands or outside Florida.
+  habInfo: null as HabInfo | null,
   // #69: the environmental assessment for the current place (air,
   // spills, beach bacteria, blooms, bacteria samples, fires,
   // shellfish). null until the first fetch lands; plans built before
   // it arrives simply carry no environmental input.
   env: null as EnvAssessment | null,
+  // #73: the place key `env` belongs to — an assessment is only ever
+  // rendered or scored against its own place — and whether an
+  // assessment fetch is currently running for the place on screen.
+  envFor: "",
+  envLoading: false,
   normals: undefined as Map<string, number> | undefined,
   extrasFor: "",
   loading: false,
@@ -310,17 +319,10 @@ async function ensureData(force = false): Promise<void> {
       state.usgs = await fetchUsgsReading(lat, lon, force);
     })(),
     (async () => {
-      state.habVeto = await fetchHabVeto(lat, lon, force);
+      state.habInfo = await fetchHabVeto(lat, lon, force);
     })(),
     (async () => {
       state.normals = await fetchNormals(lat, lon);
-    })(),
-    // #69: environmental data, one assessment per place. Best-effort
-    // like every other secondary source — a failure leaves the last
-    // assessment (or null) and plans just carry no env input.
-    (async () => {
-      const a = await fetchEnvAssessment(lat, lon, state.settings.env, state.place?.label ?? "", force);
-      if (state.place && `${state.place.lat},${state.place.lon}` === key) state.env = a;
     })(),
   );
   await Promise.all(jobs);
@@ -349,6 +351,35 @@ async function ensureData(force = false): Promise<void> {
       "Forecast unavailable (offline?) — showing typical-day estimates from astronomy and season only.";
   }
   render();
+  // #73: the environmental assessment runs BEHIND this render — the
+  // day no longer waits for the slowest check (the bacteria feed can
+  // take ~25 s on a cold server cache). Partial assessments fill the
+  // Water & air block in as each family lands.
+  runEnvAssessment(lat, lon, state.place?.label ?? "", force);
+}
+
+/** #73: fetch the environmental assessment for one place and apply
+ *  it progressively. A partial applies only when the screen has no
+ *  assessment for this place yet (first load): during a refresh or
+ *  a Settings toggle change the on-screen assessment stays whole
+ *  until the final lands, so a day never loses a veto mid-refresh. */
+function runEnvAssessment(lat: number, lon: number, label: string, force: boolean): void {
+  const key = `${lat},${lon}`;
+  state.envLoading = true;
+  const apply = (a: EnvAssessment, final: boolean) => {
+    if (!state.place || `${state.place.lat},${state.place.lon}` !== key) return;
+    if (!final && state.env && state.envFor === key) return;
+    state.env = a;
+    state.envFor = key;
+    if (final) state.envLoading = false;
+    state.plansCache.clear();
+    render();
+  };
+  void fetchEnvAssessment(lat, lon, state.settings.env, label, force, (p) => apply(p, false))
+    .then((a) => apply(a, true))
+    .catch(() => {
+      if (state.place && `${state.place.lat},${state.place.lon}` === key) state.envLoading = false;
+    });
 }
 
 function planForKey(key: string): DayPlan {
@@ -370,7 +401,7 @@ function planForKey(key: string): DayPlan {
   let envVeto: string | null = null;
   const envCautions: string[] = [];
   let envScoreModifier = 0;
-  if (state.env) {
+  if (state.env && state.envFor === `${lat},${lon}`) {
     if (isToday) {
       const v = state.env.vetoes.find((x) => x.kinds.includes(target.kind));
       envVeto = v ? v.text : null;
@@ -389,7 +420,7 @@ function planForKey(key: string): DayPlan {
     target,
     hours,
     tides: tidesForDay(state.tides, date),
-    veto: target.kind === "saltwater" ? state.habVeto : null,
+    veto: target.kind === "saltwater" ? habVetoReason() : null,
     envVeto,
     envCautions,
     envScoreModifier,
@@ -1096,6 +1127,38 @@ function render(): void {
 
 // ------------------------------------------------------------- day modal
 
+/** Short sample-date text ("Nov 19") for the #74 evidence lines. */
+function sampleDateText(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Plain age words for a sample date: today / yesterday / N days ago. */
+function sampleAgeText(ms: number): string {
+  const days = Math.floor((Date.now() - ms) / 86400_000);
+  return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+/** #74: the red tide veto sentence carried by the plan (and so by
+ *  the hero, print and calendar exports), built from the triggering
+ *  sample's own fields — what was found, where, when, how far. */
+function habVetoReason(): string | null {
+  const v = state.habInfo?.veto;
+  if (!v) return null;
+  const count = v.abundance.match(/\(([^)]+)\)/)?.[1];
+  const when = v.dateMs !== null ? ` on ${sampleDateText(v.dateMs)} (${sampleAgeText(v.dateMs)})` : "";
+  const dist = Number.isFinite(v.distKm) ? `, ${Math.round(v.distKm)} km away` : "";
+  return `red tide — Karenia brevis at ${v.level} concentration${count ? ` (${count} cells/L)` : ""} sampled at ${v.place}${when}${dist} (FWC-FWRI)`;
+}
+
+/** #74: the same evidence as a Water & air row (the row's label
+ *  already says "Red tide", so the sentence starts at the finding). */
+function habRowText(v: NonNullable<HabInfo["veto"]>): string {
+  const count = v.abundance.match(/\(([^)]+)\)/)?.[1];
+  const when = v.dateMs !== null ? ` on ${sampleDateText(v.dateMs)}` : "";
+  const dist = Number.isFinite(v.distKm) ? `, ${Math.round(v.distKm)} km away` : "";
+  return `Karenia brevis at ${v.level} concentration${count ? ` (${count} cells/L)` : ""}, sampled at ${v.place}${when}${dist}.`;
+}
+
 /** #72: the sorted signal rows behind every Water & air surface —
  *  the in-flow block, the wide rail pills and the pill balloon all
  *  read this one list, so the presentations can never disagree.
@@ -1103,15 +1166,35 @@ function render(): void {
  *  rows are spliced in here, in the Sheet D order (red tide after
  *  beach bacteria, gauge after shellfish). Flagged rows sort first:
  *  veto, then caution, then clear, then not-checked. */
+const FAMILY_ROW_LABELS: Record<string, string> = {
+  air: "Air quality",
+  spill: "Spills",
+  beach: "Beach bacteria",
+  bloom: "Algal blooms",
+  bacteria: "Bacteria samples",
+  shellfish: "Shellfish",
+  fires: "Active fires",
+  attains: "Long-term water notes",
+};
+
 function envRows(): EnvSignal[] {
-  const env = state.env;
-  if (!env || !state.place) return [];
-  const rows: EnvSignal[] = [...env.signals];
+  if (!state.place) return [];
+  const env = state.env && state.envFor === `${state.place.lat},${state.place.lon}` ? state.env : null;
+  const rows: EnvSignal[] = env ? [...env.signals] : [];
   const { lat, lon } = state.place;
   if (lat >= 24 && lat <= 31.5 && lon >= -88.5 && lon <= -79.5) {
-    const rt: EnvSignal = state.habVeto
-      ? { id: "redtide", label: "Red tide", status: "veto", text: state.habVeto, source: "FWC-FWRI" }
-      : { id: "redtide", label: "Red tide", status: "ok", text: "No red tide detected in recent samples nearby.", source: "FWC-FWRI" };
+    const hi = state.habInfo;
+    const rt: EnvSignal = hi?.veto
+      ? { id: "redtide", label: "Red tide", status: "veto", text: habRowText(hi.veto), source: "FWC-FWRI" }
+      : hi?.latest
+        ? {
+            id: "redtide",
+            label: "Red tide",
+            status: "ok",
+            text: `No medium or high red tide in recent samples. Latest sample at ${hi.latest.place}${hi.latest.dateMs !== null ? ` on ${sampleDateText(hi.latest.dateMs)}` : ""}: ${hi.latest.abundance}.`,
+            source: "FWC-FWRI",
+          }
+        : { id: "redtide", label: "Red tide", status: "ok", text: "No red tide detected in recent samples nearby.", source: "FWC-FWRI" };
     const at = rows.findIndex((r) => r.id === "bloom");
     rows.splice(at === -1 ? rows.length : at, 0, rt);
   }
@@ -1133,7 +1216,19 @@ function envRows(): EnvSignal[] {
       rows.splice(at === -1 ? rows.length : at, 0, gauge);
     }
   }
-  const rank = { veto: 0, caution: 1, ok: 2, na: 3 } as const;
+  // #73: families still loading join as placeholder rows — before
+  // any assessment exists, every switched-on family is pending.
+  const pending: EnvFamilyId[] = env
+    ? env.pending
+    : state.envLoading
+      ? ENV_FAMILY_IDS.filter((id) => state.settings.env[id])
+      : [];
+  for (const id of pending) {
+    if (!rows.some((r) => r.id === id)) {
+      rows.push({ id, label: FAMILY_ROW_LABELS[id] ?? id, status: "pend", text: "Checking…", source: "" });
+    }
+  }
+  const rank = { veto: 0, caution: 1, ok: 2, pend: 3, na: 4 } as const;
   rows.sort((a, b) => rank[a.status] - rank[b.status]);
   return rows;
 }
@@ -1143,14 +1238,20 @@ function envRows(): EnvSignal[] {
 function envSummary(rows: EnvSignal[]): { text: string; cls: string } {
   const vetoes = rows.filter((r) => r.status === "veto").length;
   const cautions = rows.filter((r) => r.status === "caution").length;
-  const checked = rows.some((r) => r.status !== "na");
+  const checked = rows.some((r) => r.status !== "na" && r.status !== "pend");
+  // #73 honesty rule: a landed veto is decisive at once, but
+  // "All clear" (or a caution count) is only claimed once every
+  // switched-on check has answered — until then, "Checking…".
+  const pending = rows.some((r) => r.status === "pend");
   return vetoes
     ? { text: "Don't go", cls: "bad" }
-    : cautions
-      ? { text: `${cautions} caution${cautions === 1 ? "" : "s"}`, cls: "warn" }
-      : checked
-        ? { text: "All clear", cls: "ok" }
-        : { text: "Couldn't check", cls: "na" };
+    : pending
+      ? { text: "Checking…", cls: "checking" }
+      : cautions
+        ? { text: `${cautions} caution${cautions === 1 ? "" : "s"}`, cls: "warn" }
+        : checked
+          ? { text: "All clear", cls: "ok" }
+          : { text: "Couldn't check", cls: "na" };
 }
 
 /** #69 (layout E1, Wade's pick): the "Water & air" block. Collapsed
@@ -1163,12 +1264,17 @@ function envSummary(rows: EnvSignal[]): { text: string; cls: string } {
  *  now also renders in the Planner (class wa-flow); CSS hides the
  *  in-flow copy at wide widths, where the rail pills take over. */
 function envBlockHtml(extraCls = ""): string {
-  const env = state.env;
-  if (!env || !state.place) return "";
+  if (!state.place) return "";
+  // #73: while the first assessment is still loading (no env yet),
+  // the block renders as a "Checking…" shell in its final place —
+  // nothing pops in or reflows when the answers land.
+  const env = state.env && state.envFor === `${state.place.lat},${state.place.lon}` ? state.env : null;
+  if (!env && !state.envLoading) return "";
   const rows = envRows();
   if (!rows.length) return "";
   const sum = envSummary(rows);
-  const checkedAt = new Date(env.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const pending = rows.some((r) => r.status === "pend");
+  const checkedAt = env ? new Date(env.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   return `
     <div class="wa-block${extraCls ? ` ${extraCls}` : ""}">
       <button type="button" class="wa-head" aria-expanded="false">
@@ -1177,8 +1283,8 @@ function envBlockHtml(extraCls = ""): string {
         <span class="wa-chev" aria-hidden="true">▾</span>
       </button>
       <div class="wa-body" hidden>
-        ${rows.map((r) => `<div class="wa-row"><span class="wa-dot ${r.status}"></span><span><strong>${esc(r.label)}</strong> — ${esc(r.text)} <span class="wa-src">${esc(r.source)}</span></span></div>`).join("")}
-        <p class="wa-note">Checked ${checkedAt}. Sample-based checks can lag the water itself — when in doubt, trust your eyes and local notices.</p>
+        ${rows.map((r) => `<div class="wa-row${r.status === "pend" ? " pend" : ""}"><span class="wa-dot ${r.status}"></span><span><strong>${esc(r.label)}</strong> — ${esc(r.text)}${r.source ? ` <span class="wa-src">${esc(r.source)}</span>` : ""}</span></div>`).join("")}
+        ${pending ? `<p class="wa-note">Checks still running — this list fills in as each answer arrives.</p>` : `<p class="wa-note">Checked ${checkedAt}. Sample-based checks can lag the water itself — when in doubt, trust your eyes and local notices.</p>`}
       </div>
     </div>`;
 }
@@ -1188,7 +1294,7 @@ function envBlockHtml(extraCls = ""): string {
  *  forecast (when AirNow/Open-Meteo has one) plus a pointer to
  *  today's view for the rest. */
 function envSlimHtml(key: string): string {
-  const env = state.env;
+  const env = state.env && state.place && state.envFor === `${state.place.lat},${state.place.lon}` ? state.env : null;
   if (!env || !state.place) return "";
   const aqi = env.aqiByDay[key];
   const row =
@@ -1224,7 +1330,7 @@ function aqiCategoryName(aqi: number): string {
  *  today gets the full block, a future day the slim forecast block,
  *  and before the first assessment lands there is nothing. */
 function waFlowHtml(key: string): string {
-  if (!state.env || !state.place) return "";
+  if (!state.place) return "";
   return key === startKey() ? envBlockHtml("wa-flow") : envSlimHtml(key);
 }
 
@@ -1246,6 +1352,8 @@ const PILL_NAMES: Record<string, string> = {
 };
 
 function pillValue(r: EnvSignal): string {
+  // #73: a family still loading shows an ellipsis, never a value.
+  if (r.status === "pend") return "…";
   const m = (re: RegExp) => r.text.match(re)?.[1];
   switch (r.id) {
     case "air": return m(/AQI (\d+)/) ?? "—";
@@ -1263,19 +1371,25 @@ function pillValue(r: EnvSignal): string {
 }
 
 function waPillsHtml(): string {
-  const env = state.env;
-  if (!env || !state.place) return "";
+  if (!state.place) return "";
+  // #73: the card renders during loading too — pending families are
+  // greyed, untappable placeholder pills (a span, not a button).
+  const env = state.env && state.envFor === `${state.place.lat},${state.place.lon}` ? state.env : null;
+  if (!env && !state.envLoading) return "";
   const rows = envRows();
   if (!rows.length) return "";
   const sum = envSummary(rows);
-  const checkedAt = new Date(env.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const pending = rows.some((r) => r.status === "pend");
+  const checkedAt = env ? new Date(env.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   return `
     <div class="acard wa-card">
       <h4>Water &amp; air <span class="wa-sum ${sum.cls}">${sum.text}</span></h4>
       <div class="wa-pills">
-        ${rows.map((r) => `<button type="button" class="wa-pill" data-wa-id="${r.id}" aria-haspopup="true"><span class="wa-dot ${r.status}"></span><span class="pname">${esc(PILL_NAMES[r.id] ?? r.label)}</span><span class="pval ${r.status}">${esc(pillValue(r))}</span></button>`).join("")}
+        ${rows.map((r) => r.status === "pend"
+          ? `<span class="wa-pill pend"><span class="wa-dot pend"></span><span class="pname">${esc(PILL_NAMES[r.id] ?? r.label)}</span><span class="pval pend">…</span></span>`
+          : `<button type="button" class="wa-pill" data-wa-id="${r.id}" aria-haspopup="true"><span class="wa-dot ${r.status}"></span><span class="pname">${esc(PILL_NAMES[r.id] ?? r.label)}</span><span class="pval ${r.status}">${esc(pillValue(r))}</span></button>`).join("")}
       </div>
-      <p class="note">Checked ${checkedAt} · tap a pill for details</p>
+      ${pending ? `<p class="note">Checking the water &amp; air reports…</p>` : `<p class="note">Checked ${checkedAt} · Tap a condition to open its details</p>`}
     </div>`;
 }
 
@@ -1297,7 +1411,9 @@ function closeWaBalloon(): void {
 function openWaBalloon(anchor: HTMLElement, id: string): void {
   const row = envRows().find((r) => r.id === id);
   const b = $("#wa-balloon");
-  if (!row || !b || !state.env) return;
+  // #73: pending rows render as spans, never buttons, so they can
+  // not reach this handler — the status check is belt and braces.
+  if (!row || row.status === "pend" || !b || !state.env) return;
   const checkedAt = new Date(state.env.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   b.innerHTML = `
     <button type="button" class="wa-x" aria-label="Close">✕</button>
@@ -3215,14 +3331,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     // current place and rebuilds plans from it.
     if (state.place && JSON.stringify(state.settings.env) !== prevEnv) {
       const { lat, lon } = state.place;
-      const label = state.place.label;
-      void fetchEnvAssessment(lat, lon, state.settings.env, label, true).then((a) => {
-        if (state.place && state.place.lat === lat && state.place.lon === lon) {
-          state.env = a;
-          state.plansCache.clear();
-          render();
-        }
-      });
+      runEnvAssessment(lat, lon, state.place.label, true);
     }
     applyTheme();
     // #63: the dropdown rebuilds from the new enabled set. If the
@@ -3249,7 +3358,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.8.0";
+  let versionLabel = "Zero Light 0.9.0";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.
