@@ -266,5 +266,40 @@ check("#69 caution flags envCaution", cautionPlan.envCaution === true);
 check("#69 caution does not change the score", cautionPlan.dayScore === basePlan.dayScore);
 check("#69 a plain plan has envCaution false", basePlan.envCaution === false);
 
+// --- #76: "best" means the highest score, not slots[0] -----------------------
+// Slot order is display order (near-ties stay chronological), so a later
+// slot can outscore the first. bestSlot must still find the true top.
+const mkSlot = (h, score) => ({
+  start: new Date(2026, 10, 25, h),
+  end: new Date(2026, 10, 25, h + 1),
+  score,
+  label: S.labelForScore(score),
+  labelSymbol: "",
+  reason: "",
+  solunarPoints: 0,
+  bestToday: false,
+});
+check("#76 bestSlot picks the highest score, not the first slot", S.bestSlot([mkSlot(1, 57), mkSlot(5, 64), mkSlot(15, 62)])?.score === 64);
+check("#76 bestSlot tie goes to the earliest slot", S.bestSlot([mkSlot(5, 64), mkSlot(1, 64)])?.start.getHours() === 1);
+check("#76 bestSlot of no slots is null", S.bestSlot([]) === null);
+// On a weak (Fair/Poor) day the "Best today" flag must sit on the
+// highest-scored slot even when display order puts another slot first.
+const weakPlan = S.generateDayPlan({
+  date: new Date(2027, 0, 15),
+  lat: 30.25,
+  lon: -88.05,
+  target: S.targetById("speckled-trout"),
+  hours: hoursFor(new Date(2027, 0, 15), { temp: 52, wind: 15 }),
+  tides: sineTides(new Date(2027, 0, 15)),
+});
+const weakTop = S.bestSlot(weakPlan.slots);
+check(
+  "#76 Best today flag sits on the highest-scored slot",
+  weakPlan.slots.length >= 2 &&
+    weakTop !== weakPlan.slots[0] &&
+    weakPlan.slots.every((s) => s.bestToday === (s === weakTop && s.score < 60)),
+  weakPlan.slots.map((s) => `${s.score}${s.bestToday ? "*" : ""}`).join(", "),
+);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL SMOKE CHECKS PASSED");
 process.exit(failures ? 1 : 0);

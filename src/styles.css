@@ -547,6 +547,12 @@ button:hover { border-color: var(--accent); }
    the Settings card. */
 body.modal-open { overflow: hidden; }
 .modal-card { box-sizing: border-box; }
+/* #80: the first-run disclaimer agreement card — body text at reading
+   size, and the agree/decline actions stacked full-width (the tour's
+   primary/plain button pairing), per the locked Sheet Q design. */
+.disclaimer-text { font-size: 0.94em; line-height: 1.55; }
+.disclaimer-actions { margin-top: 18px; display: flex; flex-direction: column; gap: 6px; }
+.disclaimer-actions > button { width: 100%; }
 .settings-card, .settings-card *, .settings-card *::before, .settings-card *::after { box-sizing: border-box; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
 .modal-head .icon-btn { font-size: 1.05em; line-height: 1; }
@@ -720,6 +726,21 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
 }
 
 @media (min-width: 75em) {
+  /* #77: in the three-column view the Trends strip shares the main
+     column with the 350px day panel, leaving each day button ~47px
+     wide — the band word at 0.66em ("Excellent" ≈ 46px) overflowed
+     its button and read as off-center. Shrink the word a notch and
+     drop the buttons' side padding at this width only so every band
+     word fits inside its button. */
+  .db-band { font-size: 0.6em; letter-spacing: 0; }
+  .day-block { padding: 4px 0; }
+  /* #78: the export row is only ~384px wide at this layout, less
+     than the three buttons' natural ~422px — flex shrink crushed
+     them below their text width and the labels overflowed to the
+     right (measured 15px left gap, 1px right). Slightly smaller
+     font + slimmer side padding restores natural widths (~350px
+     total) so the labels sit centered. */
+  .export-row > button { font-size: 0.82em; padding-left: 0.6em; padding-right: 0.6em; }
   .brand-lockup { width: 230px; }
   .container {
     max-width: 1200px;

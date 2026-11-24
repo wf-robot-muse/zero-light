@@ -157,6 +157,19 @@ export interface Slot {
   bestToday: boolean;
 }
 
+/** The day's best slot (#76): the highest score; ties go to the earliest
+ *  start. Slot ORDER is display order only — near-ties (within 10 pts)
+ *  stay chronological — so anything that names a "best window" must use
+ *  this, never slots[0]. Wade found the hero pill naming a 1–2 AM Okay
+ *  slot "Best window" over two Good slots because it read slots[0]. */
+export function bestSlot(slots: Slot[]): Slot | null {
+  let best: Slot | null = null;
+  for (const s of slots) {
+    if (!best || s.score > best.score || (s.score === best.score && s.start.getTime() < best.start.getTime())) best = s;
+  }
+  return best;
+}
+
 export interface DayPlan {
   dateKey: string;
   dayQuality: number; // 0-50
@@ -639,7 +652,11 @@ export function generateDayPlan(input: DayInputs): DayPlan {
       }
     }
     if (slots.length && verdict === "Fair" || verdict === "Poor") {
-      if (slots.length) slots[0].bestToday = slots[0].score < 60;
+      // #76: the "Best today" flag belongs on the highest-scored slot,
+      // which is not necessarily slots[0] (display order keeps near-ties
+      // chronological).
+      const top = bestSlot(slots);
+      if (top) top.bestToday = top.score < 60;
     }
   }
 

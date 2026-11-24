@@ -275,6 +275,25 @@ export function markNudgeSeen(): void {
   set(NUDGE_SEEN_KEY, "1");
 }
 
+// ------------------------------------------------- #80 disclaimer agreement
+// The first-run disclaimer modal stores the VERSION of the disclaimer
+// text the user agreed to, on this device only. If the wording ever
+// changes, the version bumps with it and the stored value no longer
+// matches, so the agreement is asked again. Anything else (missing,
+// garbled) reads as not agreed, so a damaged value simply asks once
+// more rather than suppressing the gate forever (re-validated on
+// load, input-security rule).
+const DISCLAIMER_KEY = "zl_disclaimer_v";
+export const DISCLAIMER_VERSION = "1";
+
+export function disclaimerAgreed(): boolean {
+  return get(DISCLAIMER_KEY) === DISCLAIMER_VERSION;
+}
+
+export function markDisclaimerAgreed(): void {
+  set(DISCLAIMER_KEY, DISCLAIMER_VERSION);
+}
+
 // ------------------------------------------------------- last location
 // Item #17: the user's selected location is per-user data — it is kept
 // ONLY on this device, never in the shared Layer 2 cache. It is

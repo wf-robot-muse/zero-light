@@ -37,6 +37,7 @@ import "leaflet/dist/leaflet.css";
 import {
   TARGETS,
   generateDayPlan,
+  bestSlot,
   dayBand,
   pressureTrendPer6h,
   type DayPlan,
@@ -66,6 +67,8 @@ import {
   markTourSeen,
   nudgeSeen,
   markNudgeSeen,
+  disclaimerAgreed,
+  markDisclaimerAgreed,
   CACHE_ENDPOINT,
   DEFAULT_TARGET_IDS,
   ENV_FAMILY_IDS,
@@ -543,6 +546,14 @@ function heldBackBannerHtml(plan: DayPlan): string {
 
 const PROHIBIT_SVG = `<svg class="hero-prohibit" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="33" fill="none" stroke="#fff" stroke-width="9"/><line x1="27" y1="73" x2="73" y2="27" stroke="#fff" stroke-width="9"/></svg>`;
 
+/** #76: the day's best window as a range — the highest-scored slot
+ *  (bestSlot), never slots[0]: slot order is display order and keeps
+ *  near-ties chronological, so the first slot is not always the best. */
+function bestRange(plan: DayPlan): string {
+  const b = bestSlot(plan.slots);
+  return b ? fmtRange(b.start, b.end) : "—";
+}
+
 function heroHtml(plan: DayPlan, key: string, target: TargetDef): string {
   const band = bandKey(plan);
   const stencil = plan.veto ? "" : stencilFor(target.id);
@@ -550,10 +561,12 @@ function heroHtml(plan: DayPlan, key: string, target: TargetDef): string {
   // #65: mark the wide stencils so the stylesheet can size them down
   // at the tablet tier (see WIDE_STENCILS above).
   const stencilWide = WIDE_STENCILS.has(stencilName) ? "1" : "0";
+  // #76: the pill names the highest-scored slot, not slots[0].
+  const best = bestSlot(plan.slots);
   const pill = plan.veto
     ? `<span class="hero-pill">⦻ ${esc(plan.vetoShort ?? plan.veto)}</span>`
-    : plan.slots.length
-      ? `<span class="hero-pill">${plan.slots[0].labelSymbol} Best window ${fmtRange(plan.slots[0].start, plan.slots[0].end)}</span>`
+    : best
+      ? `<span class="hero-pill">${best.labelSymbol} Best window ${fmtRange(best.start, best.end)}</span>`
       : `<span class="hero-pill">No window rated Okay or better</span>`;
   return `
   <section class="hero hero-${band}">
@@ -610,7 +623,7 @@ function weekGlanceHtml(): string {
     const key = addDaysKey(start, i);
     const plan = planForKey(key);
     const date = parseDateKey(key);
-    const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+    const best = bestRange(plan);
     cells.push(`
     <button type="button" class="wk-day wk-${bandKey(plan)}" data-offset="${i}">
       <span class="wk-dow">${date.toLocaleDateString(undefined, { weekday: "short" })}</span>
@@ -930,9 +943,8 @@ function daySummary(key: string): { band: string; best: string; hi: number; lo: 
   const plan = planForKey(key);
   const hours = state.weather?.days.get(key) ?? [];
   const band = plan.veto ? "Don't go" : dayBand(plan.dayScore);
-  const best = plan.slots.length
-    ? `${fmtTime(plan.slots[0].start)} – ${fmtTime(plan.slots[0].end)}`
-    : "no window";
+  const top = bestSlot(plan.slots);
+  const best = top ? `${fmtTime(top.start)} – ${fmtTime(top.end)}` : "no window";
   return {
     band,
     best,
@@ -2246,7 +2258,7 @@ function printDayBlock(key: string, compact: boolean): string {
       ${!plan.veto && !plan.slots.length ? `<div class="pnone">No window rated Okay or better.</div>` : ""}
     </div>`;
   }
-  const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+  const best = bestRange(plan);
   return `
   <div class="pdayblock">
     <h3 class="pstatus pband-${bandKey(plan)}">${esc(fmtDay(key))} — ${esc(band)}</h3>
@@ -2312,7 +2324,7 @@ function renderPrint(mode: PrintMode): void {
       .map((key) => {
         const plan = planForKey(key);
         const figs = printDayFigs(key);
-        const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+        const best = bestRange(plan);
         return `<tr><td>${esc(fmtDay(key))}</td><td>${esc(bandWord(plan))}</td><td>${esc(best)}</td><td>${figs.hi} / ${figs.lo}</td></tr>`;
       })
       .join("");
@@ -2406,7 +2418,7 @@ function buildPrintModel(mode: PrintMode): PrintModel | null {
       lines: keys.map((key) => {
         const plan = planForKey(key);
         const figs = printDayFigs(key);
-        const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+        const best = bestRange(plan);
         return `${fmtDay(key)} — ${bandWord(plan)} — Best window ${best} — High/Low ${figs.hi} / ${figs.lo}`;
       }),
     });
@@ -2415,7 +2427,7 @@ function buildPrintModel(mode: PrintMode): PrintModel | null {
       if (i) detail.push("");
       const plan = planForKey(key);
       const figs = printDayFigs(key);
-      const best = plan.slots.length ? fmtRange(plan.slots[0].start, plan.slots[0].end) : "—";
+      const best = bestRange(plan);
       detail.push(`${fmtDay(key)} — ${bandWord(plan)}`);
       detail.push(
         `Best window ${best} · High ${figs.hi} · Low ${figs.lo} · Wind ${figs.wind} · Rain chance ${figs.rain}` +
@@ -3234,6 +3246,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       // The map modal's backdrop click is a cancel (item #17): discard
       // the working pin and close both views, like Esc.
       if (bd.id === "map-modal") closeMapAll();
+      // #80: the disclaimer gate has no backdrop dismiss — the user
+      // must agree, or decline and stay outside.
+      else if (bd.id === "disclaimer-modal") return;
       else bd.hidden = true;
     }),
   );
@@ -3277,6 +3292,28 @@ window.addEventListener("DOMContentLoaded", async () => {
       return;
     }
     hidePickList();
+  });
+
+  // #80: disclaimer agreement gate. The text comes from the same
+  // DISCLAIMER constant the About page renders, set as text (never
+  // HTML). Agreeing records the disclaimer version on this device,
+  // closes the gate, and only then may the first-run tour start.
+  // Declining swaps to the short "Agreement needed" card, whose only
+  // way forward is back to the text — there is no path into the app
+  // without agreeing.
+  $("#disclaimer-text").textContent = DISCLAIMER;
+  $("#disclaimer-agree").addEventListener("click", () => {
+    markDisclaimerAgreed();
+    $("#disclaimer-modal").hidden = true;
+    if (!tourSeen()) startTour();
+  });
+  $("#disclaimer-decline").addEventListener("click", () => {
+    $("#disclaimer-main").hidden = true;
+    $("#disclaimer-declined").hidden = false;
+  });
+  $("#disclaimer-reread").addEventListener("click", () => {
+    $("#disclaimer-declined").hidden = true;
+    $("#disclaimer-main").hidden = false;
   });
 
   // Settings form — theme (#25) + calendar export toggles (item #20
@@ -3370,7 +3407,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 0.9.1";
+  let versionLabel = "Zero Light 1.0.0";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.
@@ -3383,9 +3420,15 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   void ensureData();
 
+  // #80: on a device that has not agreed to the current disclaimer,
+  // the gate opens before anything else; the tour waits behind it
+  // (the agree handler starts the tour when the gate closes).
+  if (!disclaimerAgreed()) openModal("disclaimer-modal");
+
   // #68: the guided tour starts once, on the first open on a device
   // that has not seen it. (Devices upgrading from before #68 have no
   // flag stored, so they get the one showing too — that is their
-  // first open with the tour in it.)
-  if (!tourSeen()) startTour();
+  // first open with the tour in it.) #80: only once the disclaimer
+  // gate is satisfied.
+  if (disclaimerAgreed() && !tourSeen()) startTour();
 });

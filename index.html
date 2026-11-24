@@ -303,6 +303,31 @@
       </div>
     </div>
 
+    <!-- First-run disclaimer agreement (item #80): shown once per
+         disclaimer version, before anything else. No close button and
+         no backdrop dismiss — the user must agree, or decline and stay
+         outside. The text is filled from the DISCLAIMER constant in
+         main.ts (the same words as the About page), as text only. -->
+    <div id="disclaimer-modal" class="modal-backdrop" hidden>
+      <div class="modal-card disclaimer-card" role="dialog" aria-modal="true" aria-label="Disclaimer">
+        <div id="disclaimer-main">
+          <h2>Before you begin</h2>
+          <p class="disclaimer-text" id="disclaimer-text"></p>
+          <div class="disclaimer-actions">
+            <button type="button" id="disclaimer-agree" class="tour-primary">I agree</button>
+            <button type="button" id="disclaimer-decline" class="tour-plain">I don't agree</button>
+          </div>
+        </div>
+        <div id="disclaimer-declined" hidden>
+          <h2>Agreement needed</h2>
+          <p class="disclaimer-text">Zero Light can't plan your days without your agreement to the disclaimer. You can read it again whenever you're ready.</p>
+          <div class="disclaimer-actions">
+            <button type="button" id="disclaimer-reread" class="tour-primary">Read it again</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Expanded map modal (item #17): the inline map element moves here -->
     <div id="map-modal" class="modal-backdrop" hidden>
       <div class="modal-card map-card" role="dialog" aria-label="Pick a location on the map">

@@ -20,6 +20,7 @@
 // native Save As dialog in the desktop apps, a browser download on
 // the web.
 import type { DayPlan, Slot } from "./scoring";
+import { bestSlot } from "./scoring";
 import { detectShellOs } from "./calendar";
 
 export type BadgePlatform = "apple" | "android";
@@ -595,10 +596,13 @@ function renderWeekBadge(days: BadgeDay[], platform: BadgePlatform): HTMLCanvasE
       ctx.textAlign = "left";
     }
     y += rowWin;
+    // #76: "Best window" = the highest-scored slot, not slots[0]
+    // (slot order is display order; near-ties stay chronological).
+    const top = bestSlot(d.plan.slots);
     const win = d.plan.veto
       ? d.plan.veto
-      : d.plan.slots.length
-        ? `Best window ${fmtRange(d.plan.slots[0].start, d.plan.slots[0].end)}`
+      : top
+        ? `Best window ${fmtRange(top.start, top.end)}`
         : "No rated window";
     text(ctx, geo, win, y, 500, 14.5, "#FFFFFF", 0.78);
   });

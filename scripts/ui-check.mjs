@@ -151,7 +151,7 @@ try {
     // by widening the viewport past 75em (1200px).
     viewport: { width: 1000, height: 850 },
   });
-  await context.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); });
+  await context.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1"); });
   const page = await context.newPage();
   page.on("pageerror", (e) => console.log("pageerror:", e.message));
 
@@ -359,6 +359,30 @@ try {
     ["Excellent", "Good", "Fair", "Poor", "Don't go"].some((w) => heroText.includes(w)),
   );
   check("hero shows the best-window pill", heroText.includes("Best window") || heroText.includes("No window"));
+  // #76: the pill must name a slot carrying the day's BEST label — slot
+  // order keeps near-ties chronological, so the first card can be an
+  // Okay slot on a day that also has Good ones (Wade's Mobile Bay find).
+  {
+    const pillText = (await page.textContent("#plan-side .hero-pill")) ?? "";
+    const cards = await page.evaluate(() =>
+      [...document.querySelectorAll("#planner .slot2")].map((el) => ({
+        label: el.querySelector(".slot2-label")?.textContent ?? "",
+        range: el.querySelector(".slot2-time")?.textContent ?? "",
+      })),
+    );
+    const rank = (t) => (t.includes("★") ? 3 : t.includes("✓") ? 2 : t.includes("·") ? 1 : 0);
+    const bestRank = Math.max(0, ...cards.map((c) => rank(c.label)));
+    check(
+      "#76 hero pill carries the day's best slot label",
+      bestRank === 0 || rank(pillText) === bestRank,
+      pillText.trim(),
+    );
+    check(
+      "#76 hero pill range belongs to a best-label slot",
+      bestRank === 0 || cards.some((c) => rank(c.label) === bestRank && c.range && pillText.includes(c.range)),
+      pillText.trim(),
+    );
+  }
   check(
     "hero ghosts the redfish stencil",
     ((await page.getAttribute(".hero-stencil", "src")) ?? "").includes("stencil-redfish"),
@@ -970,7 +994,7 @@ try {
   // placeholders in every region, and on desktop the two placeholder
   // columns end on the same line.
   const ctx2 = await browser.newContext();
-  await ctx2.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); });
+  await ctx2.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1"); });
   const page2 = await ctx2.newPage();
   await page2.setViewportSize({ width: 1440, height: 1000 });
   await page2.goto("http://localhost:4173/", { waitUntil: "load" });
@@ -1073,7 +1097,7 @@ try {
   async function printRoute(os) {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
     await ctx.addInitScript((mockOs) => {
-      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
       window.__bridgeCalls = [];
       window.__winPrint = 0;
       window.print = () => {
@@ -1132,7 +1156,7 @@ try {
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addInitScript(() => {
-      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
       window.__bridgeCalls = [];
       window.__shareCalls = [];
       window.__fsWrites = [];
@@ -1267,7 +1291,7 @@ try {
   // (Apple 416x496 @2x = 832x992; Android 480x480 @2x = 960x960).
   {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 950 }, acceptDownloads: true });
-    await ctx.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); });
+    await ctx.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1"); });
     const p = await ctx.newPage();
     await mockRoutesFor(p);
     await p.goto("http://localhost:4173/", { waitUntil: "load" });
@@ -1531,7 +1555,7 @@ try {
     // and report the failure on a dismissible card there.
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
     await ctx.addInitScript(() => {
-      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
       const orig = Storage.prototype.setItem;
       Storage.prototype.setItem = function (k, v) {
         if (k === "zl_enabled_targets") return; // silently dropped
@@ -1576,7 +1600,7 @@ try {
   {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 850 } });
     await ctx.addInitScript(() => {
-      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
       const now = Date.now();
       const entry = (t, exp) =>
         JSON.stringify({ t, exp, data: { seeded: true } });
@@ -1608,7 +1632,7 @@ try {
         "zl_cache_filler",
         JSON.stringify({ t: 1000, exp: Date.now() + 86400_000, data: { seeded: true } }),
       );
-      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
       const orig = Storage.prototype.setItem;
       Storage.prototype.setItem = function (k, v) {
         if (
@@ -1653,6 +1677,7 @@ try {
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const p = await ctx.newPage();
+    await ctx.addInitScript(() => { localStorage.setItem("zl_disclaimer_v", "1"); }); // #80: gate pre-agreed; tour flags stay unseeded on purpose
     await mockRoutesFor(p);
     await p.goto("http://localhost:4173/", { waitUntil: "load" });
     await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
@@ -1681,7 +1706,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addInitScript(() => {
       localStorage.setItem("zl_tour_seen", "1");
-      localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
     });
     const p = await ctx.newPage();
     await mockRoutesFor(p);
@@ -1700,6 +1725,7 @@ try {
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const p = await ctx.newPage();
+    await ctx.addInitScript(() => { localStorage.setItem("zl_disclaimer_v", "1"); }); // #80: gate pre-agreed; tour flags stay unseeded on purpose
     await mockRoutesFor(p);
     await p.goto("http://localhost:4173/", { waitUntil: "load" });
     await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
@@ -1730,6 +1756,7 @@ try {
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const p = await ctx.newPage();
+    await ctx.addInitScript(() => { localStorage.setItem("zl_disclaimer_v", "1"); }); // #80: gate pre-agreed; tour flags stay unseeded on purpose
     await mockRoutesFor(p);
     await p.goto("http://localhost:4173/", { waitUntil: "load" });
     await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
@@ -1756,6 +1783,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addInitScript(() => {
       localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_disclaimer_v", "1");
       localStorage.setItem("zl_enabled_targets", JSON.stringify(["redfish"]));
     });
     const p = await ctx.newPage();
@@ -1776,6 +1804,7 @@ try {
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const p = await ctx.newPage();
+    await ctx.addInitScript(() => { localStorage.setItem("zl_disclaimer_v", "1"); }); // #80: gate pre-agreed; tour flags stay unseeded on purpose
     await mockRoutesFor(p);
     await p.goto("http://localhost:4173/", { waitUntil: "load" });
     await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
@@ -1846,7 +1875,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addInitScript(() => {
       localStorage.setItem("zl_tour_seen", "1");
-      localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
     });
     const p = await ctx.newPage();
     await envRoutes(
@@ -1914,7 +1943,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addInitScript(() => {
       localStorage.setItem("zl_tour_seen", "1");
-      localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
     });
     const p = await ctx.newPage();
     const today = new Date();
@@ -2011,7 +2040,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     await ctx.addInitScript(() => {
       localStorage.setItem("zl_tour_seen", "1");
-      localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
     });
     const p = await ctx.newPage();
     const today = new Date();
@@ -2095,7 +2124,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addInitScript(() => {
       localStorage.setItem("zl_tour_seen", "1");
-      localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
     });
     const p = await ctx.newPage();
     await envRoutes(p, { covered: true, notices: [] }, { source: "airnow", current: { aqi: 42 }, daily: [{ date: dateStr(new Date()), aqi: 42 }] });
@@ -2147,7 +2176,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addInitScript(() => {
       localStorage.setItem("zl_tour_seen", "1");
-      localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
     });
     const p = await ctx.newPage();
     await envRoutes(p, { covered: true, notices: [] }, { source: "airnow", current: { aqi: 42 }, daily: [{ date: dateStr(new Date()), aqi: 42 }] });
@@ -2199,7 +2228,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addInitScript(() => {
       localStorage.setItem("zl_tour_seen", "1");
-      localStorage.setItem("zl_nudge_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
     });
     const p = await ctx.newPage();
     await envRoutes(p, { covered: true, notices: [] }, { source: "airnow", current: { aqi: 42 }, daily: [{ date: dateStr(new Date()), aqi: 42 }] });
@@ -2237,6 +2266,7 @@ try {
     // #69: tour stop 6 now names the environmental data choices.
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const p = await ctx.newPage();
+    await ctx.addInitScript(() => { localStorage.setItem("zl_disclaimer_v", "1"); }); // #80: gate pre-agreed; tour flags stay unseeded on purpose
     await mockRoutesFor(p);
     await p.goto("http://localhost:4173/", { waitUntil: "load" });
     await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
@@ -2246,6 +2276,75 @@ try {
       ((await p.textContent("#tour-body")) ?? "").includes("environmental data choices"),
     );
     await p.click("#tour-left");
+    await ctx.close();
+  }
+  {
+    // #77 + #78: in the wide three-column view (>=75em), the Trends
+    // strip cells narrow to ~47px and the export row to ~384px.
+    // #77: no band word may overflow its day button. #78: each export
+    // button's label must sit centered (equal text gaps both sides).
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 950 } });
+    await ctx.addInitScript(() => { localStorage.setItem("zl_tour_seen", "1"); localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1"); });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await pickTampaRedfish(p);
+    await p.click('#view-picker .chip[data-view="trends"]');
+    await p.waitForFunction(() => document.querySelectorAll("#trends .day-block").length >= 30, null, { timeout: 15000 });
+    const bandOverflow = await p.evaluate(() =>
+      [...document.querySelectorAll("#trends .db-band")].filter((el) => el.scrollWidth > el.clientWidth + 1).length,
+    );
+    check("#77 no Trends band word overflows its day button at 1400px", bandOverflow === 0, `${bandOverflow} overflowing`);
+    const gaps = await p.evaluate(() => {
+      const out = {};
+      for (const id of ["#export-week", "#export-month", "#badge-week"]) {
+        const b = document.querySelector(id);
+        if (!b) continue;
+        const br = b.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(b);
+        const tr = range.getBoundingClientRect();
+        out[id] = { left: Math.round(tr.x - br.x), right: Math.round(br.x + br.width - (tr.x + tr.width)) };
+      }
+      return out;
+    });
+    for (const [id, g] of Object.entries(gaps)) {
+      check(`#78 ${id} label is centered at 1400px`, Math.abs(g.left - g.right) <= 2 && g.right >= 4, `left ${g.left}px, right ${g.right}px`);
+    }
+    await ctx.close();
+  }
+  {
+    // #80: the disclaimer gate on a truly first run (no seeds at
+    // all). It must appear before the tour, refuse dismissal paths,
+    // swap to the declined card and back, record agreement on
+    // "I agree", start the tour only then, and stay away on reload.
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await p.goto("http://localhost:4173/", { waitUntil: "load" });
+    await p.waitForSelector("#disclaimer-modal:not([hidden])", { timeout: 8000 });
+    check("#80 disclaimer gate opens on first run", true);
+    check(
+      "#80 gate carries the About disclaimer text",
+      ((await p.textContent("#disclaimer-text")) ?? "").includes("planning guidance only"),
+    );
+    check("#80 tour waits behind the gate", (await p.evaluate(() => document.querySelector("#tour-layer")?.hidden)) === true);
+    await p.click("#disclaimer-decline");
+    check(
+      "#80 decline swaps to the Agreement needed card",
+      (await p.locator("#disclaimer-declined").isVisible()) && (await p.evaluate(() => document.querySelector("#disclaimer-main")?.hidden)) === true,
+    );
+    await p.click("#disclaimer-reread");
+    check("#80 Read it again returns to the full text", await p.locator("#disclaimer-text").isVisible());
+    await p.click("#disclaimer-agree");
+    await p.waitForSelector("#disclaimer-modal[hidden]", { state: "attached", timeout: 8000 });
+    check("#80 agreeing closes the gate and records the version", (await p.evaluate(() => localStorage.getItem("zl_disclaimer_v"))) === "1");
+    await p.waitForSelector("#tour-layer:not([hidden])", { timeout: 8000 });
+    check("#80 the first-run tour starts after agreeing", true);
+    await p.click("#tour-left");
+    await p.reload({ waitUntil: "load" });
+    await p.waitForTimeout(700);
+    check("#80 the gate stays closed on later opens", (await p.evaluate(() => document.querySelector("#disclaimer-modal")?.hidden)) === true);
     await ctx.close();
   }
 } catch (err) {
