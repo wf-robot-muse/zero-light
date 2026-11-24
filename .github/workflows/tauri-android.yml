@@ -18,10 +18,20 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
+          # Cache the Gradle dependency store so CI stops
+          # re-downloading every plugin/dependency POM on each run:
+          # the 2026-11-23 rebuild of 0b4ae61 failed in Gradle
+          # configuration when Maven Central answered 429 for the
+          # Kotlin Gradle plugin POMs. First run populates the
+          # cache; later runs resolve mostly from it.
+          cache: gradle
+          cache-dependency-path: |
+            src-tauri/gen/android/**/*.gradle*
+            src-tauri/gen/android/**/gradle-wrapper.properties
 
       - name: Set up Node
         uses: actions/setup-node@v4
