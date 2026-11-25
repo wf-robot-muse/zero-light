@@ -301,5 +301,55 @@ check(
   weakPlan.slots.map((s) => `${s.score}${s.bestToday ? "*" : ""}`).join(", "),
 );
 
+// --- #81: seasonal events + the one-note rule ------------------------------
+const withEvents = S.TARGETS.filter((t) => (t.seasonEvents ?? []).length > 0);
+check("#81 twenty targets carry named seasonal events", withEvents.length === 20, `${withEvents.length}`);
+check(
+  "#81 hogs/pheasant/quail/rainbow-trout/whitetail carry no event list",
+  ["feral-hogs", "pheasant", "quail", "rainbow-trout", "whitetail"].every(
+    (id) => !(S.targetById(id).seasonEvents ?? []).length,
+  ),
+);
+const bassT = S.targetById("largemouth-bass");
+check(
+  "#81 bass spawn note shows once the water passes 62F",
+  S.seasonalNote(bassT, new Date(2026, 3, 10), { tempF: 65 }) ===
+    "Spawning season — bass move shallow and guard nests as water passes 62°F.",
+);
+check(
+  "#81 bass gate closed at 55F — peak-season line instead",
+  S.seasonalNote(bassT, new Date(2026, 3, 10), { tempF: 55 }) === "Peak season for Largemouth Bass.",
+);
+check(
+  "#81 bass gate unconfirmed without a temperature — peak-season line",
+  S.seasonalNote(bassT, new Date(2026, 3, 10)) === "Peak season for Largemouth Bass.",
+);
+const crappie81 = S.targetById("crappie");
+check(
+  "#81 crappie spawn note inside its 58-65F window",
+  S.seasonalNote(crappie81, new Date(2026, 2, 10), { tempF: 60 })?.startsWith("Spawning season — crappie") === true,
+);
+check(
+  "#81 crappie gate closed at 70F — peak-season line instead",
+  S.seasonalNote(crappie81, new Date(2026, 2, 10), { tempF: 70 }) === "Peak season for Crappie.",
+);
+check(
+  "#81 turkey gobbling note in April (no gate)",
+  S.seasonalNote(S.targetById("turkey"), new Date(2026, 3, 10))?.startsWith("Gobbling season") === true,
+);
+check(
+  "#81 redfish is silent off-season (January: no event, no peak)",
+  S.seasonalNote(S.targetById("redfish"), new Date(2026, 0, 10)) === null,
+);
+check(
+  "#81 squirrel mast note in October",
+  S.seasonalNote(S.targetById("squirrel"), new Date(2026, 9, 10))?.startsWith("Mast season") === true,
+);
+check(
+  "#81 rut outranks everything for whitetail",
+  S.seasonalNote(S.targetById("whitetail"), new Date(2026, 5, 10), { rutState: "Alabama" }) ===
+    "Peak rut window for Alabama (approximate, from state data).",
+);
+
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL SMOKE CHECKS PASSED");
 process.exit(failures ? 1 : 0);

@@ -905,3 +905,41 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
 .wa-pill .pval.pend { color: var(--muted); }
 @keyframes wa-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media print { .wa-pill.pend, .wa-row.pend { display: none; } }
+
+/* ---- #82 Look back (Trends history) ---- */
+.lb-pills { display: flex; gap: 6px; flex-wrap: nowrap; margin: 0 0 10px; }
+.lb-pills .chip { padding: 0.35em 0.85em; font-size: 0.92em; box-shadow: none; }
+.lb-sub { background: var(--bg); border: 1px solid var(--det-border); border-radius: 14px; padding: 7px; }
+.lb-sub .chip { background: var(--card); }
+.lb-sub .chip.selected { background: var(--chip-on-bg); }
+.day-block.hist { opacity: 0.92; }
+.day-block.blank { visibility: hidden; }
+.day-block.loading { opacity: 0.55; }
+.lb-best { margin: 0 0 6px; }
+.lb-best-row {
+  display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left;
+  background: none; border: none; border-top: 1px solid var(--det-border);
+  padding: 8px 2px; font: inherit; font-size: 0.95em; cursor: pointer; color: var(--text);
+  box-sizing: border-box; flex-wrap: wrap;
+}
+.lb-best-row:hover { background: var(--bg); }
+.lb-best-date { font-weight: 700; white-space: nowrap; }
+.lb-best-win { white-space: nowrap; }
+.lb-best-why { color: var(--muted); }
+.lb-yeargrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 0 0 8px; }
+@media (min-width: 52.5em) { .lb-yeargrid { grid-template-columns: repeat(3, 1fr); } }
+.lb-mini {
+  text-align: left; background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px; cursor: pointer; font: inherit; box-sizing: border-box;
+}
+.lb-mini:hover { border-color: var(--accent); }
+.lb-mini-name { display: block; font-weight: 700; font-size: 0.85em; margin-bottom: 5px; }
+.lb-mini-cells { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.lb-mini-cells i { display: block; height: 8px; border-radius: 2px; }
+.lb-mini-cells i.blank { background: transparent; }
+.lb-back {
+  background: none; border: none; padding: 4px 0; font: inherit; font-weight: 600;
+  color: var(--accent-deep); cursor: pointer;
+}
+.lb-pager { display: flex; justify-content: space-between; align-items: center; margin: 4px 0 10px; }
+.lb-nav { background: none; border: none; font: inherit; font-weight: 600; color: var(--accent-deep); cursor: pointer; padding: 4px; }

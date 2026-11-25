@@ -45,6 +45,10 @@ export interface TargetDef {
   lightAnchor: number;
   /** Nocturnal targets peak at night instead of dawn/dusk. */
   nocturnal?: boolean;
+  /** #81: named seasonal events (spawn, migration, breeding, mast) shown
+   *  as a day-detail note while active. Display only — the events already
+   *  live inside peakMonths, so they never change a score. */
+  seasonEvents?: SeasonEvent[];
   /** How hard rain hurts this target (0-1 multiplier on rain penalties). */
   rainSensitivity: number;
 }
@@ -61,47 +65,90 @@ export interface TargetDef {
 export const TARGETS: TargetDef[] = [
   // Hunting — alligator (permit/tag hunts; activity peaks in the warm
   // late-summer nights of the season window)
-  { id: "alligator", name: "Alligator", kind: "hunting", peakMonths: [7, 8], shoulderMonths: [6, 9], primeMinF: 75, primeMaxF: 95, lightAnchor: 36, nocturnal: true, rainSensitivity: 0.4 },
+  { id: "alligator", name: "Alligator", kind: "hunting", peakMonths: [7, 8], shoulderMonths: [6, 9], primeMinF: 75, primeMaxF: 95, lightAnchor: 36, nocturnal: true, rainSensitivity: 0.4 , seasonEvents: [{ kind: "breeding", months: [3, 4], note: "Mating season — alligators bellow and move most in spring." }] },
   // Saltwater (FWC/USFWS temperature bands; v1 uses air temp as a water proxy)
-  { id: "black-drum", name: "Black Drum", kind: "saltwater", peakMonths: [1, 2, 3, 8, 9, 10], shoulderMonths: [0, 4, 11], primeMinF: 60, primeMaxF: 75, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "black-drum", name: "Black Drum", kind: "saltwater", peakMonths: [1, 2, 3, 8, 9, 10], shoulderMonths: [0, 4, 11], primeMinF: 60, primeMaxF: 75, lightAnchor: 34, rainSensitivity: 0.5 , seasonEvents: [{ kind: "spawn", months: [1, 2, 3], note: "Spawning run — black drum gather at passes and inlets." }] },
   // Freshwater — catfish (night feeder; rain-tolerant, feeds in rising water)
-  { id: "catfish", name: "Catfish", kind: "freshwater", peakMonths: [3, 4, 5, 6, 7, 8], shoulderMonths: [2, 9], primeMinF: 70, primeMaxF: 85, lightAnchor: 36, nocturnal: true, rainSensitivity: 0.4 },
-  { id: "cobia", name: "Cobia", kind: "saltwater", peakMonths: [3, 4, 5], shoulderMonths: [2, 9], primeMinF: 70, primeMaxF: 84, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "catfish", name: "Catfish", kind: "freshwater", peakMonths: [3, 4, 5, 6, 7, 8], shoulderMonths: [2, 9], primeMinF: 70, primeMaxF: 85, lightAnchor: 36, nocturnal: true, rainSensitivity: 0.4 , seasonEvents: [{ kind: "spawn", months: [4, 5, 6], gateMinF: 70, note: "Spawning season — catfish guard nests in cover and cavities." }] },
+  { id: "cobia", name: "Cobia", kind: "saltwater", peakMonths: [3, 4, 5], shoulderMonths: [2, 9], primeMinF: 70, primeMaxF: 84, lightAnchor: 34, rainSensitivity: 0.5 , seasonEvents: [{ kind: "migration", months: [3, 4, 5], note: "Spring migration — cobia move along the coast with the warming water." }] },
   // Freshwater — crappie (spring spawn + fall schooling)
-  { id: "crappie", name: "Crappie", kind: "freshwater", peakMonths: [1, 2, 3, 9, 10], shoulderMonths: [0, 4, 8, 11], primeMinF: 58, primeMaxF: 72, lightAnchor: 34, rainSensitivity: 0.6 },
+  { id: "crappie", name: "Crappie", kind: "freshwater", peakMonths: [1, 2, 3, 9, 10], shoulderMonths: [0, 4, 8, 11], primeMinF: 58, primeMaxF: 72, lightAnchor: 34, rainSensitivity: 0.6 , seasonEvents: [{ kind: "spawn", months: [1, 2, 3], gateMinF: 58, gateMaxF: 65, note: "Spawning season — crappie move shallow as water nears 60°F." }] },
   // Hunting — dove (early-fall fields + December season; rain grounds flights)
-  { id: "dove", name: "Dove", kind: "hunting", peakMonths: [8, 9, 11], shoulderMonths: [7, 0], primeMinF: 45, primeMaxF: 75, lightAnchor: 36, rainSensitivity: 0.8 },
+  { id: "dove", name: "Dove", kind: "hunting", peakMonths: [8, 9, 11], shoulderMonths: [7, 0], primeMinF: 45, primeMaxF: 75, lightAnchor: 36, rainSensitivity: 0.8 , seasonEvents: [{ kind: "migration", months: [8, 9], note: "Migration period — doves move through on early-fall flights." }] },
   // Hunting — feral hogs (night feeder, cool months)
   { id: "feral-hogs", name: "Feral Hogs", kind: "hunting", peakMonths: [9, 10, 11, 0, 1, 2], shoulderMonths: [3, 8], primeMinF: 30, primeMaxF: 70, lightAnchor: 36, nocturnal: true, rainSensitivity: 0.5 },
-  { id: "flounder", name: "Flounder", kind: "saltwater", peakMonths: [9, 10], shoulderMonths: [8, 2, 3, 4], primeMinF: 62, primeMaxF: 78, lightAnchor: 34, rainSensitivity: 0.5 },
-  { id: "grouper", name: "Grouper", kind: "saltwater", peakMonths: [9, 10], shoulderMonths: [2, 3, 8], primeMinF: 66, primeMaxF: 80, lightAnchor: 34, rainSensitivity: 0.5 },
-  { id: "king-mackerel", name: "King Mackerel", kind: "saltwater", peakMonths: [4, 5, 6, 7, 8, 9], shoulderMonths: [3, 10], primeMinF: 68, primeMaxF: 85, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "flounder", name: "Flounder", kind: "saltwater", peakMonths: [9, 10], shoulderMonths: [8, 2, 3, 4], primeMinF: 62, primeMaxF: 78, lightAnchor: 34, rainSensitivity: 0.5 , seasonEvents: [{ kind: "migration", months: [9, 10], note: "Fall run — flounder move through passes toward offshore spawning grounds." }] },
+  { id: "grouper", name: "Grouper", kind: "saltwater", peakMonths: [9, 10], shoulderMonths: [2, 3, 8], primeMinF: 66, primeMaxF: 80, lightAnchor: 34, rainSensitivity: 0.5 , seasonEvents: [{ kind: "spawn", months: [1, 2, 3], note: "Spawning aggregations form on offshore structure (late winter–spring)." }] },
+  { id: "king-mackerel", name: "King Mackerel", kind: "saltwater", peakMonths: [4, 5, 6, 7, 8, 9], shoulderMonths: [3, 10], primeMinF: 68, primeMaxF: 85, lightAnchor: 34, rainSensitivity: 0.5 , seasonEvents: [{ kind: "migration", months: [3, 4, 8, 9], note: "Migration run — king mackerel move along the coast." }] },
   // Freshwater (FWC/USFWS table: bass spawn 62-75)
-  { id: "largemouth-bass", name: "Largemouth Bass", kind: "freshwater", peakMonths: [2, 3, 4, 9, 10], shoulderMonths: [1, 5, 8, 11], primeMinF: 62, primeMaxF: 78, lightAnchor: 34, rainSensitivity: 0.6 },
+  { id: "largemouth-bass", name: "Largemouth Bass", kind: "freshwater", peakMonths: [2, 3, 4, 9, 10], shoulderMonths: [1, 5, 8, 11], primeMinF: 62, primeMaxF: 78, lightAnchor: 34, rainSensitivity: 0.6 , seasonEvents: [{ kind: "spawn", months: [1, 2, 3, 4], gateMinF: 62, note: "Spawning season — bass move shallow and guard nests as water passes 62°F." }] },
   // Hunting — pheasant (cold-weather upland bird)
   { id: "pheasant", name: "Pheasant", kind: "hunting", peakMonths: [9, 10, 11, 0], shoulderMonths: [8, 1], primeMinF: 20, primeMaxF: 50, lightAnchor: 34, rainSensitivity: 0.7 },
   // Hunting — quail (northern bobwhite; late-fall/winter coveys)
   { id: "quail", name: "Quail", kind: "hunting", peakMonths: [10, 11, 0, 1], shoulderMonths: [9, 2], primeMinF: 35, primeMaxF: 65, lightAnchor: 34, rainSensitivity: 0.8 },
   // Freshwater — rainbow trout (cold water; fall-through-spring)
   { id: "rainbow-trout", name: "Rainbow Trout", kind: "freshwater", peakMonths: [9, 10, 11, 0, 1, 2], shoulderMonths: [3, 8], primeMinF: 45, primeMaxF: 58, lightAnchor: 34, rainSensitivity: 0.5 },
-  { id: "redfish", name: "Redfish", kind: "saltwater", peakMonths: [8, 9, 10, 3, 4], shoulderMonths: [1, 2, 5, 7, 11], primeMinF: 65, primeMaxF: 82, lightAnchor: 34, rainSensitivity: 0.5 },
-  { id: "snapper", name: "Snapper", kind: "saltwater", peakMonths: [5, 6], shoulderMonths: [4, 7], primeMinF: 70, primeMaxF: 86, lightAnchor: 34, rainSensitivity: 0.5 },
-  { id: "snook", name: "Snook", kind: "saltwater", peakMonths: [3, 4, 5, 6, 7, 8, 9], shoulderMonths: [2, 10], primeMinF: 72, primeMaxF: 86, lightAnchor: 34, rainSensitivity: 0.5 },
-  { id: "speckled-trout", name: "Speckled Trout", kind: "saltwater", peakMonths: [3, 4, 9, 10], shoulderMonths: [1, 2, 5, 8, 11], primeMinF: 65, primeMaxF: 80, lightAnchor: 36, rainSensitivity: 0.5 },
+  { id: "redfish", name: "Redfish", kind: "saltwater", peakMonths: [8, 9, 10, 3, 4], shoulderMonths: [1, 2, 5, 7, 11], primeMinF: 65, primeMaxF: 82, lightAnchor: 34, rainSensitivity: 0.5 , seasonEvents: [{ kind: "spawn", months: [7, 8, 9], note: "Fall spawn run — bull reds gather at passes and inlets." }] },
+  { id: "snapper", name: "Snapper", kind: "saltwater", peakMonths: [5, 6], shoulderMonths: [4, 7], primeMinF: 70, primeMaxF: 86, lightAnchor: 34, rainSensitivity: 0.5 , seasonEvents: [{ kind: "spawn", months: [4, 5, 6, 7, 8], note: "Spawning season — snapper gather over offshore structure." }] },
+  { id: "snook", name: "Snook", kind: "saltwater", peakMonths: [3, 4, 5, 6, 7, 8, 9], shoulderMonths: [2, 10], primeMinF: 72, primeMaxF: 86, lightAnchor: 34, rainSensitivity: 0.5 , seasonEvents: [{ kind: "spawn", months: [4, 5, 6, 7, 8], note: "Spawning season — snook gather at passes and inlets in summer." }] },
+  { id: "speckled-trout", name: "Speckled Trout", kind: "saltwater", peakMonths: [3, 4, 9, 10], shoulderMonths: [1, 2, 5, 8, 11], primeMinF: 65, primeMaxF: 80, lightAnchor: 36, rainSensitivity: 0.5 , seasonEvents: [{ kind: "spawn", months: [3, 4, 5, 6, 7, 8], note: "Spawning season — speckled trout spawn through the warm months." }] },
   // Hunting — squirrel (fall mast season; sits out rain and high wind)
-  { id: "squirrel", name: "Squirrel", kind: "hunting", peakMonths: [9, 10, 11, 0], shoulderMonths: [8, 1], primeMinF: 35, primeMaxF: 65, lightAnchor: 34, rainSensitivity: 0.9 },
+  { id: "squirrel", name: "Squirrel", kind: "hunting", peakMonths: [9, 10, 11, 0], shoulderMonths: [8, 1], primeMinF: 35, primeMaxF: 65, lightAnchor: 34, rainSensitivity: 0.9 , seasonEvents: [{ kind: "feeding", months: [8, 9, 10], note: "Mast season — squirrels feed hard on falling acorns and hickory nuts." }] },
   // Freshwater — striped bass (landlocked/river fish; spring + fall runs,
   // a strong low-light feeder)
-  { id: "striped-bass", name: "Striped Bass", kind: "freshwater", peakMonths: [3, 4, 9, 10], shoulderMonths: [2, 5, 8, 11], primeMinF: 55, primeMaxF: 70, lightAnchor: 36, rainSensitivity: 0.5 },
+  { id: "striped-bass", name: "Striped Bass", kind: "freshwater", peakMonths: [3, 4, 9, 10], shoulderMonths: [2, 5, 8, 11], primeMinF: 55, primeMaxF: 70, lightAnchor: 36, rainSensitivity: 0.5 , seasonEvents: [{ kind: "spawn", months: [3, 4], gateMinF: 55, gateMaxF: 70, note: "Spring run — striped bass move upriver to spawn." }] },
   // Saltwater — tarpon (the warm-water migration; verified 75-85 prime)
-  { id: "tarpon", name: "Tarpon", kind: "saltwater", peakMonths: [4, 5, 6], shoulderMonths: [3, 7], primeMinF: 75, primeMaxF: 85, lightAnchor: 34, rainSensitivity: 0.5 },
+  { id: "tarpon", name: "Tarpon", kind: "saltwater", peakMonths: [4, 5, 6], shoulderMonths: [3, 7], primeMinF: 75, primeMaxF: 85, lightAnchor: 34, rainSensitivity: 0.5 , seasonEvents: [{ kind: "migration", months: [4, 5, 6], note: "Migration season — tarpon follow the warm water along the coast." }] },
   // Hunting (season windows are generic v1 approximations — see README)
-  { id: "turkey", name: "Turkey", kind: "hunting", peakMonths: [2, 3, 4], shoulderMonths: [1, 5], primeMinF: 45, primeMaxF: 70, lightAnchor: 36, rainSensitivity: 1.0 },
-  { id: "waterfowl", name: "Waterfowl", kind: "hunting", peakMonths: [11, 0, 10], shoulderMonths: [9], primeMinF: 25, primeMaxF: 50, lightAnchor: 36, rainSensitivity: 0.4 },
+  { id: "turkey", name: "Turkey", kind: "hunting", peakMonths: [2, 3, 4], shoulderMonths: [1, 5], primeMinF: 45, primeMaxF: 70, lightAnchor: 36, rainSensitivity: 1.0 , seasonEvents: [{ kind: "breeding", months: [2, 3, 4], note: "Gobbling season — breeding peaks and toms are most vocal at first light." }] },
+  { id: "waterfowl", name: "Waterfowl", kind: "hunting", peakMonths: [11, 0, 10], shoulderMonths: [9], primeMinF: 25, primeMaxF: 50, lightAnchor: 36, rainSensitivity: 0.4 , seasonEvents: [{ kind: "migration", months: [10, 11, 0], note: "Migration period — new birds arrive with cold fronts." }] },
   // Freshwater — walleye (low-light specialist; spring spawn + fall feed)
-  { id: "walleye", name: "Walleye", kind: "freshwater", peakMonths: [2, 3, 8, 9, 10], shoulderMonths: [1, 4, 11], primeMinF: 48, primeMaxF: 65, lightAnchor: 38, rainSensitivity: 0.5 },
+  { id: "walleye", name: "Walleye", kind: "freshwater", peakMonths: [2, 3, 8, 9, 10], shoulderMonths: [1, 4, 11], primeMinF: 48, primeMaxF: 65, lightAnchor: 38, rainSensitivity: 0.5 , seasonEvents: [{ kind: "spawn", months: [2, 3], gateMinF: 42, gateMaxF: 50, note: "Spawning run — walleye move to shallow rock and riffles right after ice-out." }] },
   { id: "whitetail", name: "Whitetail Deer", kind: "hunting", peakMonths: [10, 11, 0], shoulderMonths: [9], primeMinF: 32, primeMaxF: 58, lightAnchor: 38, rainSensitivity: 0.8 },
 ];
+
+export interface SeasonEvent {
+  kind: "spawn" | "migration" | "breeding" | "feeding";
+  /** Months (0-11) the event is typically active. */
+  months: number[];
+  /** The day-detail note shown while the event is active. */
+  note: string;
+  /** Optional water-temperature gate (°F): the event counts as active
+   *  only when the day's temperature (gauge water temp when known, else
+   *  the day's mean air temp — the engine's standing proxy) is at or
+   *  above gateMinF and, when set, at or below gateMaxF. With no
+   *  temperature known, a gated event stays unconfirmed and inactive. */
+  gateMinF?: number;
+  gateMaxF?: number;
+}
+
+/** #81: the one seasonal note for a target on a date, or null. The rut
+ *  (whitetail, state windows) outranks the event list — the caller passes
+ *  its state name when a rut window is active. Otherwise the first active
+ *  named event wins; failing that, a plain peak-season line in peak
+ *  months; failing that, silence (correct off-season). */
+export function seasonalNote(
+  target: TargetDef,
+  date: Date,
+  opts?: { tempF?: number; rutState?: string },
+): string | null {
+  if (opts?.rutState) {
+    return `Peak rut window for ${opts.rutState} (approximate, from state data).`;
+  }
+  const month = date.getMonth();
+  for (const ev of target.seasonEvents ?? []) {
+    if (!ev.months.includes(month)) continue;
+    if (ev.gateMinF !== undefined || ev.gateMaxF !== undefined) {
+      const t = opts?.tempF;
+      if (t === undefined) continue;
+      if (ev.gateMinF !== undefined && t < ev.gateMinF) continue;
+      if (ev.gateMaxF !== undefined && t > ev.gateMaxF) continue;
+    }
+    return ev.note;
+  }
+  if (target.peakMonths.includes(month)) return `Peak season for ${target.name}.`;
+  return null;
+}
 
 export function targetById(id: string): TargetDef {
   const t = TARGETS.find((x) => x.id === id);

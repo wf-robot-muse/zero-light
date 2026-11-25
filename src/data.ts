@@ -108,6 +108,73 @@ export async function fetchWeather(
   };
 }
 
+/** #82: recorded weather for one calendar month ("YYYY-MM"), grouped
+ *  by location-local day — the data behind the Trends Look back views.
+ *  Goes through the Worker's /history route when a cache endpoint is
+ *  configured (it picks the upstream by age and caches per month);
+ *  otherwise asks Open-Meteo directly with the same age rule: the
+ *  forecast service's past-days range inside ~92 days, the Archive
+ *  (ERA5) service beyond it. Returns an empty map on any failure —
+ *  look-back views then simply show no recorded days. */
+export async function fetchHistoryMonth(
+  lat: number,
+  lon: number,
+  ym: string,
+  opts?: { cacheEndpoint?: string },
+): Promise<Map<string, HourWeather[]>> {
+  const year = parseInt(ym.slice(0, 4), 10);
+  const mon = parseInt(ym.slice(5, 7), 10);
+  const first = `${ym}-01`;
+  const lastDay = new Date(Date.UTC(year, mon, 0)).getUTCDate();
+  const last = `${ym}-${String(lastDay).padStart(2, "0")}`;
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const ageDays = Math.round((Date.parse(todayKey) - Date.parse(last)) / 86400_000);
+  const settled = ageDays > 10;
+  const ttl = settled ? TTL.histSettledMs : TTL.histCurrentMs;
+  const hourlyVars = "temperature_2m,pressure_msl,wind_speed_10m,cloud_cover";
+  const direct =
+    ageDays <= 92
+      ? `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        `&hourly=${hourlyVars},precipitation_probability&temperature_unit=fahrenheit&wind_speed_unit=mph` +
+        `&start_date=${first}&end_date=${last}&timezone=auto`
+      : `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}` +
+        `&hourly=${hourlyVars}&temperature_unit=fahrenheit&wind_speed_unit=mph` +
+        `&start_date=${first}&end_date=${last}&timezone=auto`;
+  const url = opts?.cacheEndpoint
+    ? `${opts.cacheEndpoint.replace(/\/$/, "")}/history?lat=${lat}&lon=${lon}&month=${ym}`
+    : direct;
+  let j: OpenMeteoJson;
+  try {
+    const res = await cachedJsonUrl<OpenMeteoJson>(url, ttl);
+    j = res.data;
+  } catch (err) {
+    if (!opts?.cacheEndpoint) return new Map();
+    try {
+      const res = await cachedJsonUrl<OpenMeteoJson>(direct, ttl);
+      j = res.data;
+    } catch {
+      return new Map();
+    }
+  }
+  const days = new Map<string, HourWeather[]>();
+  const times = j.hourly?.time ?? [];
+  for (let i = 0; i < times.length; i++) {
+    const key = times[i].slice(0, 10);
+    if (!key.startsWith(ym)) continue;
+    const arr = days.get(key) ?? [];
+    arr.push({
+      time: new Date(times[i]),
+      tempF: j.hourly.temperature_2m[i],
+      pressureHpa: j.hourly.pressure_msl[i],
+      windMph: j.hourly.wind_speed_10m[i],
+      cloudCover: j.hourly.cloud_cover?.[i] ?? 0,
+      precipProb: j.hourly.precipitation_probability?.[i] ?? 0,
+    });
+    days.set(key, arr);
+  }
+  return days;
+}
+
 /** Fetch CO-OPS tide predictions (hi/lo events + hourly curve) for a range.
  *  Returns undefined on any failure — inland and offline use simply has no
  *  tide anchor. */

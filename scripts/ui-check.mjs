@@ -89,6 +89,30 @@ function weatherFixture() {
     },
   };
 }
+// #82: recorded weather for one requested month ("YYYY-MM"), in the
+// Open-Meteo shape — same mild pattern as weatherFixture.
+function historyFixture(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  const days = new Date(y, m, 0).getDate();
+  const time = [], temp = [], pres = [], wind = [], cloud = [], precip = [];
+  for (let day = 1; day <= days; day++) {
+    const d = new Date(y, m - 1, day);
+    for (let h = 0; h < 24; h++) {
+      time.push(`${dateStr(d)}T${pad(h)}:00`);
+      temp.push(Math.round(74 + 6 * Math.sin(((h - 9) / 24) * 2 * Math.PI)));
+      pres.push(1018); wind.push(6); cloud.push(30); precip.push(5);
+    }
+  }
+  return {
+    timezone: "America/New_York",
+    utc_offset_seconds: -18000,
+    hourly: { time, temperature_2m: temp, pressure_msl: pres, wind_speed_10m: wind, cloud_cover: cloud, precipitation_probability: precip },
+  };
+}
+function historyRoute(route) {
+  const ym = new URL(route.request().url()).searchParams.get("month") ?? "";
+  route.fulfill({ contentType: "application/json", body: JSON.stringify(historyFixture(ym)) });
+}
 function tideFixture(interval) {
   const preds = [];
   const today = new Date();
@@ -159,6 +183,7 @@ try {
   await page.route("**workers.dev/weather**", (route) =>
     route.fulfill({ contentType: "application/json", body: JSON.stringify(weatherFixture()) }),
   );
+  await page.route("**workers.dev/history**", historyRoute);
   await page.route("**workers.dev/usgs**", (route) =>
     route.fulfill({ contentType: "application/json", body: "{}" }),
   );
@@ -1027,6 +1052,7 @@ try {
     await p.route("**workers.dev/weather**", (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify(weatherFixture()) }),
     );
+    await p.route("**workers.dev/history**", historyRoute);
     await p.route("**workers.dev/usgs**", (route) =>
       route.fulfill({ contentType: "application/json", body: "{}" }),
     );
@@ -2345,6 +2371,82 @@ try {
     await p.reload({ waitUntil: "load" });
     await p.waitForTimeout(700);
     check("#80 the gate stays closed on later opens", (await p.evaluate(() => document.querySelector("#disclaimer-modal")?.hidden)) === true);
+    await ctx.close();
+  }
+  // #81 + #82: Look back — controls, one-line sub-menus, the year
+  // drill-down, a past day's "as it happened" detail, and the #81
+  // seasonal note inside it (redfish spawn every October).
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
+    });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await pickTampaRedfish(p);
+    await p.click('#view-picker .chip[data-view="trends"]');
+    await p.waitForSelector(".lb-dir[data-dir='back']", { timeout: 15000 });
+    check("#82 Trends offers Coming up / Look back", true);
+    await p.click(".lb-dir[data-dir='back']");
+    await p.waitForSelector(".lb-pill[data-lb='days3']", { timeout: 15000 });
+    const pillCount = await p.locator(".lb-pill").count();
+    check("#82 Look back starts with 3 days + Week/Month/Year pills", pillCount === 4, `${pillCount}`);
+    const pillTops = await p.evaluate(() =>
+      [...document.querySelectorAll(".lb-pill")].map((x) => Math.round(x.getBoundingClientRect().top)),
+    );
+    check("#82 the four pills start on one line", new Set(pillTops).size === 1, pillTops.join(","));
+    await p.waitForFunction(
+      () => document.querySelectorAll("#trends .day-block.hist").length >= 7,
+      null,
+      { timeout: 20000 },
+    );
+    check("#82 Look back lands on last week (7 recorded day blocks)", true);
+    await p.click(".lb-pill[data-lb='week']");
+    await p.waitForSelector(".lb-subpill[data-week-ago='1']", { timeout: 10000 });
+    const subTops = await p.evaluate(() =>
+      [...document.querySelectorAll(".lb-subpill")].map((x) => Math.round(x.getBoundingClientRect().top)),
+    );
+    check("#82 Week sub-menu fits on one line", subTops.length === 3 && new Set(subTops).size === 1, subTops.join(","));
+    await p.click(".lb-pill[data-lb='year']");
+    await p.waitForSelector(".lb-subpill[data-year]", { timeout: 10000 });
+    const yr = new Date().getFullYear() - 1;
+    await p.click(`.lb-subpill[data-year='${yr}']`);
+    await p.waitForFunction(
+      () => document.querySelectorAll(".lb-mini").length === 12,
+      null,
+      { timeout: 30000 },
+    );
+    check("#82 year view shows all twelve months", true);
+    await p.click(".lb-mini[data-month='9']");
+    await p.waitForSelector("#lb-back-year", { timeout: 15000 });
+    check("#82 tapping a month opens it inside the year", true);
+    await p.waitForFunction(
+      () => document.querySelectorAll("#trends .day-block.hist").length >= 28,
+      null,
+      { timeout: 20000 },
+    );
+    const oct15 = `${yr}-10-15`;
+    await p.click(`.day-block.hist[data-key='${oct15}']`);
+    await p.waitForFunction(
+      () => document.querySelector("#day-modal-content")?.textContent?.includes("AS IT HAPPENED"),
+      null,
+      { timeout: 20000 },
+    );
+    check("#82 a past day opens labelled as it happened", true);
+    const detailText = await p.evaluate(() => document.querySelector("#day-modal-content")?.textContent ?? "");
+    check(
+      "#82 past detail says it was scored from recorded weather",
+      detailText.includes("Scored from recorded weather for this day"),
+    );
+    check(
+      "#81 redfish fall spawn note shows in the October past detail",
+      detailText.includes("Fall spawn run — bull reds gather at passes and inlets."),
+    );
+    check(
+      "#82 past detail carries no Plan/Export/Badge actions",
+      (await p.locator("#day-modal-content .modal-actions").count()) === 0,
+    );
     await ctx.close();
   }
 } catch (err) {

@@ -32,6 +32,11 @@ export const TTL = {
   envFirmsMs: 3 * 3600_000, // active-fire detections
   envShellfishMs: 6 * 3600_000, // FDACS daily status pages
   envAttainsMs: 7 * 86400_000, // ATTAINS assessments: reviewed on multi-year cycles (#70)
+  // Item #82 history: recorded weather by month. A settled month is
+  // kept a month on-device (it cannot change); the current month only
+  // a day, while its last days are still settling into the record.
+  histSettledMs: 30 * 86400_000,
+  histCurrentMs: 86400_000,
 } as const;
 
 interface Entry {

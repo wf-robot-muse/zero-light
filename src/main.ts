@@ -39,6 +39,7 @@ import {
   generateDayPlan,
   bestSlot,
   dayBand,
+  seasonalNote,
   pressureTrendPer6h,
   type DayPlan,
   type TargetDef,
@@ -47,6 +48,7 @@ import {
 } from "./scoring";
 import {
   fetchWeather,
+  fetchHistoryMonth,
   fetchTides,
   tidesForDay,
   dateKey,
@@ -213,6 +215,28 @@ const state = {
   envLoading: false,
   normals: undefined as Map<string, number> | undefined,
   extrasFor: "",
+  // #82: Trends direction and the Look back selection. lbKind picks the
+  // period family, lbAgo the week/month step back (1-3), lbYear the
+  // year being browsed, lbYearMonth the drilled-in month (null = the
+  // year-at-a-glance). History (recorded weather) loads by month into
+  // its own store; histPlans caches past-day plans separately because
+  // their inputs (recorded hours, historic tides) differ from today's.
+  trendsDir: "up" as "up" | "back",
+  lbGroup: null as null | "week" | "month" | "year",
+  lbKind: "week" as "days3" | "week" | "month" | "year",
+  lbAgo: 1,
+  lbYear: new Date().getFullYear() - 1,
+  lbYearMonth: null as null | number,
+  history: null as null | {
+    forKey: string;
+    days: Map<string, import("./scoring").HourWeather[]>;
+    months: Set<string>;
+    inflight: Set<string>;
+  },
+  histPlans: new Map<string, DayPlan>(),
+  histStamp: 0,
+  historyTides: undefined as Tides | undefined,
+  historyTidesFor: "",
   loading: false,
   plansCache: new Map<string, DayPlan>(),
 };
@@ -385,7 +409,169 @@ function runEnvAssessment(lat: number, lon: number, label: string, force: boolea
     });
 }
 
+// ------------------------------------------------------------- history (#82)
+
+/** True when the day is before the location's today — its plan must
+ *  come from recorded weather, never from the forecast store. */
+function isPastKey(key: string): boolean {
+  return key < startKey();
+}
+
+/** The day's hourly weather from whichever store holds it: the live
+ *  forecast for today forward, the recorded history for past days. */
+function hoursForKey(key: string): import("./scoring").HourWeather[] {
+  return state.weather?.days.get(key) ?? state.history?.days.get(key) ?? [];
+}
+
+function historyStore(): NonNullable<typeof state.history> {
+  const { lat, lon } = currentLatLon();
+  const forKey = `${lat},${lon}`;
+  if (!state.history || state.history.forKey !== forKey) {
+    state.history = { forKey, days: new Map(), months: new Set(), inflight: new Set() };
+    state.histPlans.clear();
+    state.historyTides = undefined;
+    state.historyTidesFor = "";
+  }
+  return state.history;
+}
+
+/** Load the recorded-weather months covering [startK, endK] (and the
+ *  tide predictions for the range, for saltwater targets). Months are
+ *  marked loaded even when a fetch comes back empty, so a place with
+ *  no recorded data cannot retrigger fetches on every render. When new
+ *  data lands, past-day plans are dropped and the current view is
+ *  re-rendered. */
+function ensureHistory(startK: string, endK: string): void {
+  if (!state.place) return;
+  const store = historyStore();
+  const months: string[] = [];
+  for (let k = startK.slice(0, 7); ; ) {
+    months.push(k);
+    if (k >= endK.slice(0, 7)) break;
+    const [y, m] = k.split("-").map(Number);
+    const next = new Date(Date.UTC(y, m, 1));
+    k = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
+  const { lat, lon } = currentLatLon();
+  let started = false;
+  for (const ym of months) {
+    if (store.months.has(ym) || store.inflight.has(ym)) continue;
+    store.inflight.add(ym);
+    started = true;
+    void fetchHistoryMonth(lat, lon, ym, { cacheEndpoint: CACHE_ENDPOINT })
+      .then((days) => {
+        if (state.history !== store) return;
+        for (const [k, v] of days) store.days.set(k, v);
+        store.months.add(ym);
+        store.inflight.delete(ym);
+        state.histStamp++;
+        state.histPlans.clear();
+        render();
+      })
+      .catch(() => {
+        if (state.history !== store) return;
+        store.months.add(ym);
+        store.inflight.delete(ym);
+      });
+  }
+  void started;
+  const target = currentTarget();
+  if (target?.kind === "saltwater" && state.tideStationId) {
+    const sig = `${state.tideStationId}|${startK}|${endK}`;
+    if (state.historyTidesFor !== sig) {
+      state.historyTidesFor = sig;
+      void fetchTides(state.tideStationId, parseDateKey(startK), parseDateKey(endK)).then((t) => {
+        if (state.historyTidesFor !== sig) return;
+        state.historyTides = t;
+        state.histPlans.clear();
+        if (state.view === "trends" && state.trendsDir === "back") render();
+      });
+    }
+  }
+}
+
+function historyPlanForKey(key: string): DayPlan {
+  const store = historyStore();
+  const cacheKey = `${key}|${state.targetId}|${store.forKey}|${state.histStamp}`;
+  const hit = state.histPlans.get(cacheKey);
+  if (hit) return hit;
+  const target = currentTarget();
+  if (!target) throw new Error("historyPlanForKey called with no target chosen");
+  const { lat, lon } = currentLatLon();
+  const date = parseDateKey(key);
+  const hours = store.days.get(key) ?? [];
+  const rut = target.id === "whitetail" ? rutForLocation(lat, lon, date) : undefined;
+  const plan = generateDayPlan({
+    date,
+    lat,
+    lon,
+    target,
+    hours,
+    tides: tidesForDay(state.historyTides, date),
+    veto: null,
+    waterTempF: undefined,
+    rutPeak: !!rut,
+    typicalMeanF: hours.length ? undefined : state.normals?.get(key.slice(5)),
+    tzOffsetSec: state.weather?.utcOffsetSec,
+  });
+  state.histPlans.set(cacheKey, plan);
+  return plan;
+}
+
+/** #81: the day's seasonal note (rut line included), or null. The
+ *  temperature gate reads the live gauge on today and the day's mean
+ *  temperature otherwise — the engine's standing air-as-water proxy. */
+function seasonalNoteFor(key: string, target: TargetDef): string | null {
+  const hours = hoursForKey(key);
+  let tempF: number | undefined;
+  if (key === startKey() && state.usgs?.waterTempF !== undefined && target.kind !== "hunting") {
+    tempF = state.usgs.waterTempF;
+  } else if (hours.length) {
+    tempF = hours.reduce((a, h) => a + h.tempF, 0) / hours.length;
+  }
+  const { lat, lon } = currentLatLon();
+  const rut = target.id === "whitetail" ? rutForLocation(lat, lon, parseDateKey(key)) : undefined;
+  return seasonalNote(target, parseDateKey(key), { tempF, rutState: rut?.state });
+}
+
+/** #82: the Sun–Sat week containing a key. */
+function weekStartKey(key: string): string {
+  return addDaysKey(key, -parseDateKey(key).getDay());
+}
+
+/** #82: the Planner's comparison line — how the same Sun–Sat week
+ *  rated a year ago. Null until that week's recorded weather is in
+ *  (the caller starts the load) or when too little of it was recorded
+ *  to say anything honest. */
+function sameWeekLastYearLine(): string | null {
+  const t = parseDateKey(startKey());
+  const ly = new Date(t.getFullYear() - 1, t.getMonth(), t.getDate());
+  const start = weekStartKey(dateKey(ly));
+  const keys = Array.from({ length: 7 }, (_, i) => addDaysKey(start, i));
+  const store = historyStore();
+  const have = keys.filter((k) => store.days.has(k)).length;
+  if (have < 4) {
+    ensureHistory(keys[0], keys[6]);
+    return null;
+  }
+  let best: { key: string; plan: DayPlan } | null = null;
+  for (const k of keys) {
+    const plan = historyPlanForKey(k);
+    if (plan.veto) continue;
+    if (!best || plan.dayScore > best.plan.dayScore) best = { key: k, plan };
+  }
+  if (!best) return null;
+  const band = dayBand(best.plan.dayScore);
+  const bs = bestSlot(best.plan.slots);
+  const when = parseDateKey(best.key).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  return bs
+    ? `Same week last year: rated ${band} — best window ${bestRange(best.plan)} on ${when}.`
+    : `Same week last year: rated ${band} — no window reached the Okay level that week.`;
+}
+
 function planForKey(key: string): DayPlan {
+  // #82: past days are planned from recorded weather, not the forecast.
+  if (isPastKey(key)) return historyPlanForKey(key);
   const cacheKey = `${key}|${state.targetId}|${state.weatherFor}|${state.extrasFor}`;
   const hit = state.plansCache.get(cacheKey);
   if (hit) return hit;
@@ -867,10 +1053,14 @@ function renderPlanner(): void {
         ` — live gauge data, not an air-temperature estimate.`,
     );
   }
-  if (target.id === "whitetail") {
-    const { lat, lon } = currentLatLon();
-    const rut = rutForLocation(lat, lon, parseDateKey(key));
-    if (rut) extras.push(`Peak rut window for ${rut.state} (approximate, from state data).`);
+  // #81: the seasonal note (the rut line is its whitetail case).
+  const sNote = seasonalNoteFor(key, target);
+  if (sNote) extras.push(sNote);
+  // #82: how the same week rated a year ago (Planner's selected day
+  // is today or later; the line describes today's week).
+  if (key === startKey()) {
+    const ly = sameWeekLastYearLine();
+    if (ly) extras.push(ly);
   }
   if (state.tideStationId && target.kind === "saltwater") {
     extras.push(`Tides from NOAA station ${state.tideStationId}${state.tideStationName ? ` (${esc(state.tideStationName)})` : ""}.`);
@@ -955,6 +1145,258 @@ function daySummary(key: string): { band: string; best: string; hi: number; lo: 
   };
 }
 
+// ------------------------------------------------------------- look back (#82)
+
+const BAND_COLORS: Record<string, string> = {
+  Excellent: "#1E6634",
+  Good: "#2E7D46",
+  Fair: "#BC8400",
+  Poor: "#607D8B",
+  "Don't go": "#B3261E",
+};
+
+function monthKeysOf(year: number, monthIdx: number): string[] {
+  const days = new Date(year, monthIdx + 1, 0).getDate();
+  const ym = `${year}-${String(monthIdx + 1).padStart(2, "0")}`;
+  return Array.from({ length: days }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`);
+}
+
+/** The keys of the currently selected look-back period (year excluded —
+ *  it has its own glance/drill rendering). */
+function lbPeriodKeys(): { keys: string[]; title: string } {
+  const today = startKey();
+  if (state.lbKind === "days3") {
+    return { keys: [addDaysKey(today, -2), addDaysKey(today, -1), today], title: "Last 3 days" };
+  }
+  if (state.lbKind === "month") {
+    const t = parseDateKey(today);
+    const first = new Date(t.getFullYear(), t.getMonth() - state.lbAgo, 1);
+    const keys = monthKeysOf(first.getFullYear(), first.getMonth());
+    return {
+      keys,
+      title: first.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+    };
+  }
+  const start = addDaysKey(weekStartKey(today), -7 * state.lbAgo);
+  const keys = Array.from({ length: 7 }, (_, i) => addDaysKey(start, i));
+  const fmt = (k: string) => parseDateKey(k).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return { keys, title: `${fmt(keys[0])} – ${fmt(keys[6])}` };
+}
+
+function lbDayBlock(key: string): string {
+  const store = historyStore();
+  const loaded = store.months.has(key.slice(0, 7));
+  const date = parseDateKey(key);
+  if (!loaded && !store.days.has(key)) {
+    return `<div class="day-block hist loading"><span class="db-dow">${"SMTWTFS"[date.getDay()]}</span><span class="db-num">${date.getDate()}</span><span class="db-band">…</span></div>`;
+  }
+  const plan = historyPlanForKey(key);
+  const band = plan.veto ? "Don't go" : dayBand(plan.dayScore);
+  return `<div class="day-block band-${band === "Don't go" ? "veto" : band.toLowerCase()} hist${plan.typical ? " typical" : ""}" data-key="${key}" tabindex="0" role="button" aria-label="${key} detail">
+    <span class="db-dow">${"SMTWTFS"[date.getDay()]}</span>
+    <span class="db-num">${date.getDate()}</span>
+    <span class="db-band">${esc(band)}</span>
+  </div>`;
+}
+
+function lbBestList(keys: string[], n: number, title: string): string {
+  const store = historyStore();
+  const entries = keys
+    .filter((k) => store.days.has(k))
+    .map((k) => ({ key: k, plan: historyPlanForKey(k) }))
+    .filter((e) => !e.plan.veto)
+    .sort((a, b) => b.plan.dayScore - a.plan.dayScore)
+    .slice(0, n);
+  if (!entries.length) return "";
+  const rows = entries
+    .map(({ key, plan }) => {
+      const band = dayBand(plan.dayScore);
+      const bs = bestSlot(plan.slots);
+      const when = parseDateKey(key).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      return `<button type="button" class="lb-best-row" data-key="${key}">
+        <span class="lb-best-date">${esc(when)}</span>
+        <span class="band-chip band-${band.toLowerCase()}">${esc(band)}</span>
+        <span class="lb-best-win">${bs ? esc(bestRange(plan)) : "No window reached Okay"}</span>
+        ${bs ? `<span class="lb-best-why">${esc(bs.reason)}</span>` : ""}
+      </button>`;
+    })
+    .join("");
+  return `<h3>${esc(title)}</h3><div class="lb-best">${rows}</div>`;
+}
+
+function lbMonthStrip(keys: string[]): string {
+  const lead = parseDateKey(keys[0]).getDay();
+  const blanks = Array.from({ length: lead }, () => `<div class="day-block blank"></div>`).join("");
+  return `<div class="strip">${blanks}${keys.map(lbDayBlock).join("")}</div>`;
+}
+
+function lbYearGlance(year: number): string {
+  const store = historyStore();
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  let exc = 0;
+  let good = 0;
+  const excByMonth = new Array(12).fill(0);
+  let poorRun = 0;
+  let longestPoor = 0;
+  const yearKeys: string[] = [];
+  const minis = monthNames
+    .map((name, m) => {
+      const keys = monthKeysOf(year, m);
+      yearKeys.push(...keys);
+      const lead = parseDateKey(keys[0]).getDay();
+      const cells: string[] = Array.from({ length: lead }, () => `<i class="blank"></i>`);
+      for (const k of keys) {
+        if (!store.days.has(k)) {
+          cells.push(`<i style="background:#d5dbd7"></i>`);
+          continue;
+        }
+        const plan = historyPlanForKey(k);
+        const band = plan.veto ? "Don't go" : dayBand(plan.dayScore);
+        if (band === "Excellent") { exc++; excByMonth[m]++; }
+        if (band === "Good") good++;
+        if (band === "Poor" || band === "Don't go") { poorRun++; longestPoor = Math.max(longestPoor, poorRun); }
+        else poorRun = 0;
+        cells.push(`<i style="background:${BAND_COLORS[band]}${plan.typical ? ";opacity:.4" : ""}"></i>`);
+      }
+      return `<button type="button" class="lb-mini" data-month="${m}"><span class="lb-mini-name">${name}</span><span class="lb-mini-cells">${cells.join("")}</span></button>`;
+    })
+    .join("");
+  let bestMonth = -1;
+  for (let m = 0; m < 12; m++) if (excByMonth[m] > 0 && (bestMonth < 0 || excByMonth[m] > excByMonth[bestMonth])) bestMonth = m;
+  const summary =
+    exc + good > 0
+      ? `<p class="note">${year} in short: ${exc} Excellent day${exc === 1 ? "" : "s"}, ${good} Good.` +
+        (bestMonth >= 0 ? ` Best month: ${monthNames[bestMonth]} (${excByMonth[bestMonth]} Excellent).` : "") +
+        (longestPoor >= 5 ? ` Longest poor stretch: ${longestPoor} days.` : "") +
+        `</p>`
+      : "";
+  return `${summary}<div class="lb-yeargrid">${minis}</div>${lbBestList(yearKeys, 5, `Best of ${year}`)}`;
+}
+
+function renderLookBack(el: HTMLElement): void {
+  const target = currentTarget();
+  if (!target) return;
+  const store = historyStore();
+  const curYear = parseDateKey(startKey()).getFullYear();
+  const years = [curYear - 1, curYear - 2, curYear - 3];
+  const pills = `
+    <div class="lb-pills" role="group" aria-label="Look back range">
+      <button type="button" class="chip lb-pill${state.lbKind === "days3" ? " selected" : ""}" data-lb="days3">3 days</button>
+      <button type="button" class="chip lb-pill${state.lbGroup === "week" ? " selected" : ""}" data-lb="week">Week…</button>
+      <button type="button" class="chip lb-pill${state.lbGroup === "month" ? " selected" : ""}" data-lb="month">Month…</button>
+      <button type="button" class="chip lb-pill${state.lbGroup === "year" ? " selected" : ""}" data-lb="year">Year…</button>
+    </div>`;
+  let sub = "";
+  if (state.lbGroup === "week") {
+    sub = `<div class="lb-pills lb-sub">${[1, 2, 3]
+      .map((n) => `<button type="button" class="chip lb-subpill${state.lbKind === "week" && state.lbAgo === n ? " selected" : ""}" data-week-ago="${n}">${n === 1 ? "Last week" : `${n} wks ago`}</button>`)
+      .join("")}</div>`;
+  } else if (state.lbGroup === "month") {
+    sub = `<div class="lb-pills lb-sub">${[1, 2, 3]
+      .map((n) => `<button type="button" class="chip lb-subpill${state.lbKind === "month" && state.lbAgo === n ? " selected" : ""}" data-month-ago="${n}">${n === 1 ? "Last month" : `${n} mo ago`}</button>`)
+      .join("")}</div>`;
+  } else if (state.lbGroup === "year") {
+    sub = `<div class="lb-pills lb-sub">${years
+      .map((y, i) => `<button type="button" class="chip lb-subpill${state.lbKind === "year" && state.lbYear === y ? " selected" : ""}" data-year="${y}">${y} · ${i + 1} yr${i ? "s" : ""}</button>`)
+      .join("")}</div>`;
+  }
+
+  let body = "";
+  if (state.lbKind === "year" && state.lbYearMonth !== null) {
+    const m = state.lbYearMonth;
+    const keys = monthKeysOf(state.lbYear, m);
+    ensureHistory(keys[0], keys[keys.length - 1]);
+    const monthName = parseDateKey(keys[0]).toLocaleDateString(undefined, { month: "long" });
+    const prevName = m > 0 ? parseDateKey(monthKeysOf(state.lbYear, m - 1)[0]).toLocaleDateString(undefined, { month: "short" }) : "";
+    const nextName = m < 11 ? parseDateKey(monthKeysOf(state.lbYear, m + 1)[0]).toLocaleDateString(undefined, { month: "short" }) : "";
+    body = `
+      <button type="button" class="lb-back" id="lb-back-year">‹ Back to ${state.lbYear}</button>
+      <div class="lb-pager">
+        ${m > 0 ? `<button type="button" class="lb-nav" data-nav="-1">‹ ${esc(prevName)}</button>` : "<span></span>"}
+        <strong>${esc(monthName)} ${state.lbYear}</strong>
+        ${m < 11 ? `<button type="button" class="lb-nav" data-nav="1">${esc(nextName)} ›</button>` : "<span></span>"}
+      </div>
+      ${lbMonthStrip(keys)}
+      ${lbBestList(keys, 5, "Best days that month")}`;
+  } else if (state.lbKind === "year") {
+    ensureHistory(`${state.lbYear}-01-01`, `${state.lbYear}-12-31`);
+    body = lbYearGlance(state.lbYear);
+  } else {
+    const { keys, title } = lbPeriodKeys();
+    ensureHistory(keys[0], keys[keys.length - 1]);
+    const strip =
+      state.lbKind === "month"
+        ? lbMonthStrip(keys)
+        : `<div class="strip">${keys.map(lbDayBlock).join("")}</div>`;
+    body = `<h3>${esc(title)} — ${esc(target.name)}</h3>${strip}${lbBestList(keys, state.lbKind === "month" ? 5 : 3, state.lbKind === "days3" ? "Best of the 3 days" : "Best days")}`;
+  }
+  const loading = store.inflight.size > 0;
+
+  el.innerHTML = `
+    <div class="trends-layout">
+    <section class="card trends-main">
+      <h2>Viability trends</h2>
+      <div class="lb-pills lb-toggle">
+        <button type="button" class="chip lb-dir" data-dir="up">Coming up</button>
+        <button type="button" class="chip lb-dir selected" data-dir="back">Look back</button>
+      </div>
+      ${pills}
+      ${sub}
+      ${loading ? `<p class="note">Loading recorded weather…</p>` : ""}
+      ${body}
+      <p class="note">Past days are scored by the same engine from <strong>recorded</strong> weather
+      (Open-Meteo past-days and archive data), real gauge history and tide tables — never from the
+      forecast they had. Paler cells are typical-day estimates where no record was available.</p>
+    </section>
+    </div>`;
+
+  el.querySelectorAll<HTMLButtonElement>(".lb-dir").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.trendsDir = b.dataset.dir === "back" ? "back" : "up";
+      renderTrends();
+    }),
+  );
+  el.querySelectorAll<HTMLButtonElement>(".lb-pill").forEach((b) =>
+    b.addEventListener("click", () => {
+      const g = b.dataset.lb!;
+      if (g === "days3") {
+        state.lbKind = "days3";
+        state.lbGroup = null;
+      } else {
+        const grp = g as "week" | "month" | "year";
+        state.lbGroup = state.lbGroup === grp ? null : grp;
+        state.lbKind = grp;
+        if (grp === "year") state.lbYearMonth = null;
+      }
+      renderTrends();
+    }),
+  );
+  el.querySelectorAll<HTMLButtonElement>("[data-week-ago]").forEach((b) =>
+    b.addEventListener("click", () => { state.lbAgo = parseInt(b.dataset.weekAgo!, 10); state.lbKind = "week"; renderTrends(); }),
+  );
+  el.querySelectorAll<HTMLButtonElement>("[data-month-ago]").forEach((b) =>
+    b.addEventListener("click", () => { state.lbAgo = parseInt(b.dataset.monthAgo!, 10); state.lbKind = "month"; renderTrends(); }),
+  );
+  el.querySelectorAll<HTMLButtonElement>("[data-year]").forEach((b) =>
+    b.addEventListener("click", () => { state.lbYear = parseInt(b.dataset.year!, 10); state.lbKind = "year"; state.lbYearMonth = null; renderTrends(); }),
+  );
+  el.querySelectorAll<HTMLButtonElement>(".lb-mini").forEach((b) =>
+    b.addEventListener("click", () => { state.lbYearMonth = parseInt(b.dataset.month!, 10); renderTrends(); }),
+  );
+  const backBtn = el.querySelector<HTMLButtonElement>("#lb-back-year");
+  if (backBtn) backBtn.addEventListener("click", () => { state.lbYearMonth = null; renderTrends(); });
+  el.querySelectorAll<HTMLButtonElement>(".lb-nav").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (state.lbYearMonth === null) return;
+      state.lbYearMonth = Math.min(11, Math.max(0, state.lbYearMonth + parseInt(b.dataset.nav!, 10)));
+      renderTrends();
+    }),
+  );
+  el.querySelectorAll<HTMLElement>(".day-block[data-key], .lb-best-row").forEach((cell) => {
+    cell.addEventListener("click", () => openDayDetail(cell.dataset.key!));
+  });
+}
+
 function renderTrends(): void {
   const el = $("#trends");
   const rail = $("#wa-rail");
@@ -968,6 +1410,12 @@ function renderTrends(): void {
     // #24: Trends is gated the same way as the planner.
     rail.innerHTML = "";
     el.innerHTML = skTrendsHtml("Pick a target to see best times.");
+    return;
+  }
+  // #82: Look back replaces the forward strips with recorded history.
+  if (state.trendsDir === "back") {
+    rail.innerHTML = "";
+    renderLookBack(el);
     return;
   }
   // #72: the pill card under the toggle (wide widths; CSS hides it
@@ -1022,6 +1470,10 @@ function renderTrends(): void {
     <div class="trends-layout">
     <section class="card trends-main">
       <h2>Viability trends</h2>
+      <div class="lb-pills lb-toggle">
+        <button type="button" class="chip lb-dir selected" data-dir="up">Coming up</button>
+        <button type="button" class="chip lb-dir" data-dir="back">Look back</button>
+      </div>
       <div class="row export-row export-row-top">
         <button type="button" id="export-week">Export week (.ics)</button>
         <button type="button" id="export-month">Export month (.ics)</button>
@@ -1052,6 +1504,12 @@ function renderTrends(): void {
       includeDontGo: state.settings.includeDontGo,
     });
   };
+  el.querySelectorAll<HTMLButtonElement>(".lb-dir").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.trendsDir = b.dataset.dir === "back" ? "back" : "up";
+      renderTrends();
+    }),
+  );
   $("#export-week").addEventListener("click", () => exportRange(7));
   $("#export-month").addEventListener("click", () => exportRange(30));
   // #56: the week badge covers the same 7 strip days as Export week.
@@ -1493,8 +1951,11 @@ function dayDetailHtml(key: string, compact = false): string {
   const target = currentTarget();
   if (!target) return "";
   const day: ExportDay = { plan, date: parseDateKey(key), targetName: target.name, locationName: locationShortName() };
-  const hours = state.weather?.days.get(key) ?? [];
-  const tides = tidesForDay(state.tides, parseDateKey(key));
+  // #82: past days read recorded weather and historic tides, and are
+  // labelled as history — never dressed up as a forecast.
+  const past = isPastKey(key);
+  const hours = hoursForKey(key);
+  const tides = tidesForDay(past ? state.historyTides : state.tides, parseDateKey(key));
   const tideHtml = tides?.events.length
     ? `<p class="note">Tides: ${tides.events
         .map((e) => `${e.type} ${fmtTime(e.time)} (${e.heightFt.toFixed(1)} ft)`)
@@ -1512,7 +1973,7 @@ function dayDetailHtml(key: string, compact = false): string {
               <span class="slot2-time">${fmtRange(s.start, s.end)}</span>
             </div>
             <div class="slot2-reason">${esc(s.reason)}</div>
-            ${slotAddLinks(day, i)}
+            ${past ? "" : slotAddLinks(day, i)}
           </div>`,
           )
           .join("")}</div>`
@@ -1520,24 +1981,40 @@ function dayDetailHtml(key: string, compact = false): string {
   // #69: the Water & air block rides today's detail only (current
   // conditions); other days surface their AQI through the banner.
   const envHtml = key === startKey() ? envBlockHtml() : "";
-  return `
-    <div class="verdict verdict-${bandKey(plan)}">Day: ${bandWord(plan).toUpperCase()}</div>
-    ${heldBackBannerHtml(plan)}
-    <div class="row modal-actions">
+  // #81: the seasonal note rides every day detail, past and future.
+  const sNote = seasonalNoteFor(key, target);
+  const seasonHtml = sNote ? `<p class="note">${esc(sNote)}</p>` : "";
+  // #82: a past day gets no Plan/Export/Badge row — those act on the
+  // future — and its weather line says plainly that it is recorded.
+  const actionsHtml = past
+    ? ""
+    : `<div class="row modal-actions">
       <button type="button" class="plan-this-day">${compact ? "Plan" : "Plan this day"}</button>
       <button type="button" class="export-this-day">${compact ? "Export (.ics)" : "Export this day (.ics)"}</button>
       <button type="button" class="badge-this-day">Watch badge</button>
-    </div>
-    ${slotsHtml}
-    ${envHtml}
-    ${
-      hours.length
-        ? `<p class="note">Weather: high ${Math.round(Math.max(...hours.map((h) => h.tempF)))}°F ·
+    </div>`;
+  const weatherHtml = past
+    ? hours.length
+      ? `<p class="note">Recorded weather: high ${Math.round(Math.max(...hours.map((h) => h.tempF)))}°F ·
+           low ${Math.round(Math.min(...hours.map((h) => h.tempF)))}°F ·
+           wind to ${Math.round(Math.max(...hours.map((h) => h.windMph)))} mph</p>
+         <p class="note">Scored from recorded weather for this day, not from the forecast it had.</p>
+         <p class="note">Water & air checks describe today only; they are not reconstructed for past days.</p>`
+      : `<p class="note">No recorded weather is available for this date — shown as a typical-day estimate.</p>`
+    : hours.length
+      ? `<p class="note">Weather: high ${Math.round(Math.max(...hours.map((h) => h.tempF)))}°F ·
            low ${Math.round(Math.min(...hours.map((h) => h.tempF)))}°F ·
            wind to ${Math.round(Math.max(...hours.map((h) => h.windMph)))} mph ·
            rain chance to ${Math.round(Math.max(...hours.map((h) => h.precipProb)))}%</p>`
-        : `<p class="note">Typical-day estimate — no forecast exists for this date yet.</p>`
-    }
+      : `<p class="note">Typical-day estimate — no forecast exists for this date yet.</p>`;
+  return `
+    <div class="verdict verdict-${bandKey(plan)}">Day: ${bandWord(plan).toUpperCase()}${past ? " — AS IT HAPPENED" : ""}</div>
+    ${heldBackBannerHtml(plan)}
+    ${actionsHtml}
+    ${slotsHtml}
+    ${envHtml}
+    ${seasonHtml}
+    ${weatherHtml}
     <p class="note">Sunrise ${fmtTime(plan.astro.sunrise)} · Sunset ${fmtTime(plan.astro.sunset)} ·
     Moonrise ${plan.astro.moonrise ? fmtTime(plan.astro.moonrise) : "—"} · Moonset ${plan.astro.moonset ? fmtTime(plan.astro.moonset) : "—"} ·
     Moon ${Math.round(plan.astro.moonIllumination * 100)}% lit · Solunar major ${fmtTime(plan.solunarMajor.start)} – ${fmtTime(plan.solunarMajor.end)} (annotation only)</p>
@@ -1644,6 +2121,20 @@ const INFO_HTML = `
   summarise how the waters in your watershed fared in the states' long-term impairment
   assessments. They describe the watershed's record, not today's water, and never change
   a rating.</p>
+  <h3>Seasonal notes</h3>
+  <p>Day details name the seasonal event in play — a spawn, a migration, the rut, mast
+  season — when one is active, or note the target's peak season. The notes are display
+  only: the events already live inside the season part of the score, so naming them
+  changes nothing about the rating. Some spawns also wait on the water itself — the
+  note appears only once the day's temperature (gauge reading, else the day's mean)
+  crosses the event's threshold.</p>
+  <h3>Looking back</h3>
+  <p>Trends can also look back — the last 3 days, recent weeks and months, and whole
+  years up to three years ago. Past days are scored by the same engine from
+  <strong>recorded</strong> weather (Open-Meteo's past-days and archive data), gauge
+  history and tide tables, and their details say "as it happened": what the day
+  actually rated, not what its forecast promised. Water &amp; air checks describe
+  today only and are never reconstructed for a past day.</p>
   <p class="note">Water temperature comes from a nearby USGS gauge when one is reporting;
   otherwise fish bands use air temperature as a labelled proxy. Rut windows for deer come from
   state-published peak-breeding data (AL/FL/GA/MS/TX) and are approximate — Tennessee publishes
@@ -3407,7 +3898,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 1.0.0";
+  let versionLabel = "Zero Light 1.1.0";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.

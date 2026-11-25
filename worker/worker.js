@@ -196,6 +196,60 @@ async function handleWeather(request, env, ctx, url) {
   return jsonResponse({ error: "upstream unavailable" }, 502);
 }
 
+
+// ------------------------------------------------- history (item #82)
+// Recorded weather for one calendar month, for the Trends "Look back"
+// views. Two upstreams, picked by age: the forecast service's past-days
+// range while the month is within ~92 days (its recent days are the
+// freshest record), and Open-Meteo's Archive service (ERA5 reanalysis)
+// beyond that. The newest archive days lag ~5 days, which is exactly
+// why the seam sits where it does. Cached per 0.1° cell per month
+// (hist1:) so look-back ranges reuse each other's months; a settled
+// month keeps a 30-day TTL — recorded weather does not change — while
+// the current month refreshes daily.
+const ARCHIVE_WEATHER = "https://archive-api.open-meteo.com/v1/archive";
+
+async function handleHistory(request, env, ctx, url) {
+  const ll = parseLatLon(url);
+  if (!ll) return jsonResponse({ error: "lat/lon required" }, 400);
+  const ym = url.searchParams.get("month") ?? "";
+  if (!/^\d{4}-\d{2}$/.test(ym)) return jsonResponse({ error: "month=YYYY-MM required" }, 400);
+  const year = parseInt(ym.slice(0, 4), 10);
+  const mon = parseInt(ym.slice(5, 7), 10);
+  if (mon < 1 || mon > 12 || year < 1940) return jsonResponse({ error: "month out of range" }, 400);
+  const first = `${ym}-01`;
+  const lastDate = new Date(Date.UTC(year, mon, 0));
+  const last = `${ym}-${String(lastDate.getUTCDate()).padStart(2, "0")}`;
+  const todayKey = new Date().toISOString().slice(0, 10);
+  if (first > todayKey) return jsonResponse({ error: "month in the future" }, 400);
+  const { cellLat, cellLon } = cellOf(ll.lat, ll.lon);
+  const key = `hist1:${cellLat}:${cellLon}:${ym}`;
+  const ageDays = Math.round((Date.parse(todayKey) - Date.parse(last)) / 86400_000);
+  const settled = ageDays > 10;
+  const ttlSec = settled ? 30 * 86400 : 86400;
+  const recent = ageDays <= 92;
+  const hourlyVars = "temperature_2m,pressure_msl,wind_speed_10m,cloud_cover";
+  const upstream = recent
+    ? `${UPSTREAM_WEATHER}?latitude=${cellLat}&longitude=${cellLon}` +
+      `&hourly=${hourlyVars},precipitation_probability&temperature_unit=fahrenheit&wind_speed_unit=mph` +
+      `&start_date=${first}&end_date=${last}&timezone=auto`
+    : `${ARCHIVE_WEATHER}?latitude=${cellLat}&longitude=${cellLon}` +
+      `&hourly=${hourlyVars}&temperature_unit=fahrenheit&wind_speed_unit=mph` +
+      `&start_date=${first}&end_date=${last}&timezone=auto`;
+  return serveCached(env, ctx, key, ttlSec, 7 * 86400, async () => {
+    const res = await fetch(upstream, { headers: { "user-agent": "ZeroLight-Cache/1.0" } });
+    if (!res.ok) return null;
+    const body = await res.text();
+    try {
+      const parsed = JSON.parse(body);
+      if (!Array.isArray(parsed?.hourly?.time) || parsed.hourly.time.length === 0) return null;
+    } catch {
+      return null;
+    }
+    return body;
+  });
+}
+
 // ------------------------------------------------- geocoding (item #17)
 
 async function handleGeocode(request, env, ctx, url) {
@@ -1145,6 +1199,8 @@ export default {
         return handleGeo(request);
       case "/weather":
         return handleWeather(request, env, ctx, url);
+      case "/history":
+        return handleHistory(request, env, ctx, url);
       case "/geocode":
         return handleGeocode(request, env, ctx, url);
       case "/reverse":
