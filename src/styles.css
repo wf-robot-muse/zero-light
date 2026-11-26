@@ -245,6 +245,12 @@ button:hover { border-color: var(--accent); }
   display: flex; flex-direction: column; min-width: 210px;
 }
 .info-menu button { border: none; text-align: left; padding: 9px 12px; border-radius: 6px; background: none; color: var(--text); }
+/* #85: the print menu's context line under a row (Look back titles);
+   empty in Coming up, where the menu keeps its plain three rows. */
+.print-sub { display: block; font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+.print-sub:empty { display: none; }
+.info-menu button:disabled { color: var(--muted); cursor: default; }
+.info-menu button:disabled:hover { background: none; }
 .info-menu button:hover { background: var(--v-good-bg); border: none; }
 
 /* #56: the badge pop-out's rows carry a brand glyph drawn in
@@ -796,6 +802,15 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
   .pkv td:first-child { font-weight: 600; white-space: nowrap; }
   .psum { border-collapse: collapse; width: 100%; margin: 10px 0; }
   .psum th, .psum td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid #ddd; }
+  /* #85: the historic year sheet's at-a-glance grid — twelve mini
+     months, cells filled with the band colours (exact colour
+     printing is already set for the print root). */
+  .py-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 10px 0; }
+  .py-mini { border: 1px solid #ddd; border-radius: 6px; padding: 6px 7px; break-inside: avoid; }
+  .py-mini-name { font-weight: 700; font-size: 12px; margin-bottom: 4px; }
+  .py-cells { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .py-cells i { height: 9px; border-radius: 2px; background: #e8e8e8; }
+  .py-cells i.blank { background: transparent; }
   .pbreak { break-after: page; }
   .pslot { margin: 7px 0; }
   .preason { color: #000; }
@@ -862,6 +877,9 @@ table.factors td.dots { color: var(--accent); letter-spacing: 0.12em; white-spac
 .wa-card { display: none; }
 #wa-rail { display: none; }
 .wa-pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+/* #84: skeleton pill silhouettes for the unselected Trends pane —
+   same grey family as the .sk blocks in the day panel. */
+.sk-pill { display: inline-block; height: 26px; border-radius: 999px; background: var(--sk); }
 .wa-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: inherit; font-size: 13px; cursor: pointer; }
 .wa-pill .pname { font-weight: 600; }
 .wa-pill .pval { font-weight: 700; }

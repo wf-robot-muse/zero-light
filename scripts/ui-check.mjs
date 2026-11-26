@@ -2449,6 +2449,121 @@ try {
     );
     await ctx.close();
   }
+  // #84 + #85 (desktop width): Look back keeps the two-column layout —
+  // day taps fill the side panel, not a modal — and the Water & air
+  // rail pane stays a skeleton until a day is picked, in both
+  // directions; a past pick shows the today-only note. The print menu
+  // retitles in Look back and the historic sheets render stamped.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    await ctx.addInitScript(() => {
+      localStorage.setItem("zl_tour_seen", "1");
+      localStorage.setItem("zl_nudge_seen", "1"); localStorage.setItem("zl_disclaimer_v", "1");
+    });
+    const p = await ctx.newPage();
+    await mockRoutesFor(p);
+    await pickTampaRedfish(p);
+    await p.click('#view-picker .chip[data-view="trends"]');
+    await p.waitForSelector("#trends .day-block", { timeout: 15000 });
+    check(
+      "#84 Coming up: Water & air pane is a skeleton before any pick",
+      (await p.locator("#wa-rail .sk-pill").count()) >= 3 && (await p.locator("#wa-rail .wa-pill").count()) === 0,
+    );
+    await p.click("#trends .day-block >> nth=2");
+    await p.waitForFunction(
+      () => document.querySelectorAll("#wa-rail .wa-pill").length > 0,
+      null,
+      { timeout: 20000 },
+    );
+    check("#84 Coming up: the pane populates once a day is picked", true);
+    check(
+      "#84 Coming up: the pick fills the side panel, not a modal",
+      (await p.locator("#day-panel h3").count()) === 1 && (await p.locator("#day-modal:not([hidden])").count()) === 0,
+    );
+    await p.click(".lb-dir[data-dir='back']");
+    await p.waitForSelector(".lb-pill[data-lb='days3']", { timeout: 15000 });
+    check(
+      "#84 Look back renders the side panel column too",
+      (await p.locator("#trends #day-panel").count()) === 1 && (await p.locator("#trends #day-panel .sk").count()) > 0,
+    );
+    check(
+      "#84 Look back: pane back to skeleton after the direction switch",
+      (await p.locator("#wa-rail .sk-pill").count()) >= 3 && (await p.locator("#wa-rail .wa-pill").count()) === 0,
+    );
+    await p.waitForFunction(
+      () => document.querySelectorAll("#trends .day-block.hist").length >= 7,
+      null,
+      { timeout: 20000 },
+    );
+    await p.click("#trends .day-block.hist >> nth=3");
+    await p.waitForFunction(
+      () => document.querySelector("#day-panel")?.textContent?.includes("AS IT HAPPENED"),
+      null,
+      { timeout: 20000 },
+    );
+    check("#84 Look back: a past pick fills the panel (no modal) with the as-it-happened detail", true);
+    check(
+      "#84 no modal opens for the past pick at desktop width",
+      (await p.locator("#day-modal:not([hidden])").count()) === 0,
+    );
+    check(
+      "#84 a past pick puts the pane in its today-only state",
+      ((await p.textContent("#wa-rail")) ?? "").includes("Today only"),
+    );
+    // The app closes its menus on any window scroll (#35), so park
+    // the page at the top before opening the menu — then the rows
+    // need no scroll-into-view of their own.
+    await p.evaluate(() => window.scrollTo(0, 0));
+    await p.click("#print-btn");
+    await p.waitForSelector("#print-menu:not([hidden])", { timeout: 8000 });
+    check(
+      "#85 print menu retitles in Look back (Print period row)",
+      ((await p.textContent("#print-week")) ?? "").includes("Print period"),
+    );
+    check(
+      "#85 Print day is enabled with a past pick and names it",
+      (await p.locator("#print-day").isEnabled()) && ((await p.textContent("#print-day")) ?? "").includes("as it happened"),
+    );
+    await p.click("#print-week");
+    await p.waitForFunction(
+      () => (document.querySelector("#print-root")?.textContent ?? "").includes("Period view — as it happened"),
+      null,
+      { timeout: 10000 },
+    );
+    check("#85 the period sheet renders stamped as it happened", true);
+    await p.evaluate(() => window.scrollTo(0, 0));
+    await p.click("#print-btn");
+    await p.waitForSelector("#print-menu:not([hidden])", { timeout: 8000 });
+    await p.click("#print-day");
+    await p.waitForFunction(
+      () => (document.querySelector("#print-root")?.textContent ?? "").includes("Day view — as it happened"),
+      null,
+      { timeout: 10000 },
+    );
+    check("#85 the historic day sheet renders with the recorded-weather stamp", ((await p.textContent("#print-root")) ?? "").includes("scored from recorded weather"));
+    await ctx.close();
+  }
+  // #85: the PDF writer embeds the header logo when the model
+  // carries one (and leaves it out cleanly when it does not).
+  {
+    const { buildPrintPdf } = await import("../src/printpdf.ts");
+    const withLogo = Buffer.from(
+      buildPrintPdf({
+        meta: ["Somewhere · Target: Redfish"],
+        sections: [{ lines: ["A line."] }],
+        footer: "Footer.",
+        logoJpeg: { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0xff, 0xd9]), width: 1200, height: 460 },
+      }),
+    ).toString("latin1");
+    check(
+      "#85 PDF carries the logo image in its header",
+      withLogo.startsWith("%PDF") && withLogo.includes("/Subtype /Image") && withLogo.includes("/Im1 Do"),
+    );
+    const noLogo = Buffer.from(
+      buildPrintPdf({ meta: ["x"], sections: [{ lines: ["y"] }], footer: "z" }),
+    ).toString("latin1");
+    check("#85 PDF without a logo stays a clean text sheet", noLogo.startsWith("%PDF") && !noLogo.includes("/Subtype /Image"));
+  }
 } catch (err) {
   console.log("ERROR", err.message);
   failures.push("exception: " + err.message);

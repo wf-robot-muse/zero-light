@@ -22,6 +22,18 @@ export interface PrintModel {
   meta: string[];
   sections: PrintSection[];
   footer: string;
+  /** #85: the app lockup as JPEG bytes (rasterized from the SVG
+   *  master by main.ts), drawn at the top of page 1 so the PDF
+   *  header matches the HTML print header. Absent = no logo. */
+  logoJpeg?: { bytes: Uint8Array; width: number; height: number };
+}
+
+/** #85: how wide the header logo prints, and its height from the
+ *  master's aspect — shared by the layout (which reserves the space
+ *  on page 1) and the page painter (which draws it there). */
+const LOGO_W = 150;
+function logoH(model: PrintModel): number {
+  return model.logoJpeg ? (LOGO_W * model.logoJpeg.height) / model.logoJpeg.width : 0;
 }
 
 const PAGE_W = 612; // Letter, points
@@ -129,7 +141,9 @@ function layout(model: PrintModel): PlacedLine[][] {
 
   const pages: PlacedLine[][] = [];
   let page: PlacedLine[] = [];
-  let y = PAGE_H - MARGIN;
+  // #85: page 1 starts below the header logo; later pages use the
+  // full column.
+  let y = PAGE_H - MARGIN - (model.logoJpeg ? logoH(model) + 8 : 0);
   for (const line of all) {
     const lh = line.size * 1.35;
     if (y - line.gapBefore - lh < MARGIN) {
@@ -157,6 +171,13 @@ export function buildPrintPdf(model: PrintModel): Uint8Array {
   const pageContents = pages.map((lines, pi) => {
     let y = PAGE_H - MARGIN;
     let s = "";
+    // #85: the logo image at the top of page 1, in the space layout()
+    // reserved for it; the text then starts below it.
+    if (pi === 0 && model.logoJpeg) {
+      const h = logoH(model);
+      s += `q ${LOGO_W} 0 0 ${h.toFixed(1)} ${MARGIN} ${(PAGE_H - MARGIN - h).toFixed(1)} cm /Im1 Do Q\n`;
+      y -= h + 8;
+    }
     for (const line of lines) {
       const lh = line.size * 1.35;
       y -= line.gapBefore;
@@ -175,10 +196,25 @@ export function buildPrintPdf(model: PrintModel): Uint8Array {
     `<< /Type /Pages /Kids [${pageObjIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`;
   objects[3] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>`;
   objects[4] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>`;
+  // #85: the logo as an image XObject (JPEG embeds as-is under
+  // DCTDecode). Its bytes ride the file as a latin1 string — one char
+  // per byte — which the byte-per-char conversion at the end keeps
+  // exact, offsets included.
+  const logoObjId = model.logoJpeg ? 5 + pages.length * 2 : 0;
+  if (model.logoJpeg) {
+    const { bytes, width, height } = model.logoJpeg;
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 8192) {
+      bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    }
+    objects[logoObjId] =
+      `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} ` +
+      `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n${bin}\nendstream`;
+  }
   pages.forEach((_, i) => {
     objects[pageObjIds[i]] =
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] ` +
-      `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObjIds[i]} 0 R >>`;
+      `/Resources << /Font << /F1 3 0 R /F2 4 0 R >>${i === 0 && logoObjId ? ` /XObject << /Im1 ${logoObjId} 0 R >>` : ""} >> /Contents ${contentObjIds[i]} 0 R >>`;
     const content = pageContents[i];
     objects[contentObjIds[i]] = `<< /Length ${content.length} >>\nstream\n${content}endstream`;
   });

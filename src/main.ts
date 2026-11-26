@@ -92,6 +92,40 @@ import { sweepCache } from "./cache";
 import lockupLightUrl from "../assets/logo/zero-light-lockup-on-light.svg?url";
 import lockupDarkUrl from "../assets/logo/zero-light-lockup-on-dark.svg?url";
 
+// #85: the PDF print sheets carry the same lockup as the HTML print
+// header. The PDF writer embeds JPEG only, so the on-light SVG master
+// is rasterized once at startup — white ground, since that colorway
+// is drawn for light paper — and the bytes ride every print model.
+// If anything in the chain fails, PDFs simply print without a logo.
+let printLogoJpeg: { bytes: Uint8Array; width: number; height: number } | null = null;
+async function preparePrintLogo(): Promise<void> {
+  try {
+    const blob = await (await fetch(lockupLightUrl)).blob();
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("logo image failed"));
+      img.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200;
+    canvas.height = 460;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    const jpg = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!jpg) return;
+    printLogoJpeg = { bytes: new Uint8Array(await jpg.arrayBuffer()), width: canvas.width, height: canvas.height };
+  } catch {
+    /* no logo in the PDF — the sheet is complete without it */
+  }
+}
+void preparePrintLogo();
+
 // #28 hero stencils: engraved prey art, one webp per target. The glob makes
 // any missing file degrade gracefully (that target's hero shows no ghost).
 const STENCIL_BY_TARGET: Record<string, string> = {
@@ -222,6 +256,11 @@ const state = {
   // its own store; histPlans caches past-day plans separately because
   // their inputs (recorded hours, historic tides) differ from today's.
   trendsDir: "up" as "up" | "back",
+  // #84: the day currently selected in Trends (either direction), or
+  // null. The wide day panel and the Water & air rail pane both key
+  // off it: no selection, no populated pane. Switching direction,
+  // period group, sub-period or year clears it back to null.
+  trendsDay: null as string | null,
   lbGroup: null as null | "week" | "month" | "year",
   lbKind: "week" as "days3" | "week" | "month" | "year",
   lbAgo: 1,
@@ -1199,14 +1238,21 @@ function lbDayBlock(key: string): string {
   </div>`;
 }
 
-function lbBestList(keys: string[], n: number, title: string): string {
+/** A period's best days, best first — shared by the on-screen best
+ *  list (#82) and the printed best-days sheet (#85). Days with no
+ *  recorded weather yet, and veto days, never appear. */
+function lbBestEntries(keys: string[], n: number): { key: string; plan: DayPlan }[] {
   const store = historyStore();
-  const entries = keys
+  return keys
     .filter((k) => store.days.has(k))
     .map((k) => ({ key: k, plan: historyPlanForKey(k) }))
     .filter((e) => !e.plan.veto)
     .sort((a, b) => b.plan.dayScore - a.plan.dayScore)
     .slice(0, n);
+}
+
+function lbBestList(keys: string[], n: number, title: string): string {
+  const entries = lbBestEntries(keys, n);
   if (!entries.length) return "";
   const rows = entries
     .map(({ key, plan }) => {
@@ -1276,6 +1322,8 @@ function lbYearGlance(year: number): string {
 function renderLookBack(el: HTMLElement): void {
   const target = currentTarget();
   if (!target) return;
+  // #84: a selection from Coming up never carries into Look back.
+  if (state.trendsDay && state.trendsDay >= startKey()) state.trendsDay = null;
   const store = historyStore();
   const curYear = parseDateKey(startKey()).getFullYear();
   const years = [curYear - 1, curYear - 2, curYear - 3];
@@ -1348,16 +1396,24 @@ function renderLookBack(el: HTMLElement): void {
       (Open-Meteo past-days and archive data), real gauge history and tide tables — never from the
       forecast they had. Paler cells are typical-day estimates where no record was available.</p>
     </section>
+    <aside id="day-panel" class="card day-panel">${skDayPanelHtml()}
+    </aside>
     </div>`;
+  // #84: restore the picked day's panel after a re-render (history
+  // months landing one by one re-render this view several times).
+  if (state.trendsDay) fillDayPanel(state.trendsDay, false);
 
   el.querySelectorAll<HTMLButtonElement>(".lb-dir").forEach((b) =>
     b.addEventListener("click", () => {
-      state.trendsDir = b.dataset.dir === "back" ? "back" : "up";
+      const dir = b.dataset.dir === "back" ? "back" : "up";
+      if (dir !== state.trendsDir) state.trendsDay = null; // #84
+      state.trendsDir = dir;
       renderTrends();
     }),
   );
   el.querySelectorAll<HTMLButtonElement>(".lb-pill").forEach((b) =>
     b.addEventListener("click", () => {
+      state.trendsDay = null; // #84: a new period resets the panel
       const g = b.dataset.lb!;
       if (g === "days3") {
         state.lbKind = "days3";
@@ -1372,22 +1428,23 @@ function renderLookBack(el: HTMLElement): void {
     }),
   );
   el.querySelectorAll<HTMLButtonElement>("[data-week-ago]").forEach((b) =>
-    b.addEventListener("click", () => { state.lbAgo = parseInt(b.dataset.weekAgo!, 10); state.lbKind = "week"; renderTrends(); }),
+    b.addEventListener("click", () => { state.trendsDay = null; state.lbAgo = parseInt(b.dataset.weekAgo!, 10); state.lbKind = "week"; renderTrends(); }),
   );
   el.querySelectorAll<HTMLButtonElement>("[data-month-ago]").forEach((b) =>
-    b.addEventListener("click", () => { state.lbAgo = parseInt(b.dataset.monthAgo!, 10); state.lbKind = "month"; renderTrends(); }),
+    b.addEventListener("click", () => { state.trendsDay = null; state.lbAgo = parseInt(b.dataset.monthAgo!, 10); state.lbKind = "month"; renderTrends(); }),
   );
   el.querySelectorAll<HTMLButtonElement>("[data-year]").forEach((b) =>
-    b.addEventListener("click", () => { state.lbYear = parseInt(b.dataset.year!, 10); state.lbKind = "year"; state.lbYearMonth = null; renderTrends(); }),
+    b.addEventListener("click", () => { state.trendsDay = null; state.lbYear = parseInt(b.dataset.year!, 10); state.lbKind = "year"; state.lbYearMonth = null; renderTrends(); }),
   );
   el.querySelectorAll<HTMLButtonElement>(".lb-mini").forEach((b) =>
-    b.addEventListener("click", () => { state.lbYearMonth = parseInt(b.dataset.month!, 10); renderTrends(); }),
+    b.addEventListener("click", () => { state.trendsDay = null; state.lbYearMonth = parseInt(b.dataset.month!, 10); renderTrends(); }),
   );
   const backBtn = el.querySelector<HTMLButtonElement>("#lb-back-year");
-  if (backBtn) backBtn.addEventListener("click", () => { state.lbYearMonth = null; renderTrends(); });
+  if (backBtn) backBtn.addEventListener("click", () => { state.trendsDay = null; state.lbYearMonth = null; renderTrends(); });
   el.querySelectorAll<HTMLButtonElement>(".lb-nav").forEach((b) =>
     b.addEventListener("click", () => {
       if (state.lbYearMonth === null) return;
+      state.trendsDay = null;
       state.lbYearMonth = Math.min(11, Math.max(0, state.lbYearMonth + parseInt(b.dataset.nav!, 10)));
       renderTrends();
     }),
@@ -1413,14 +1470,19 @@ function renderTrends(): void {
     return;
   }
   // #82: Look back replaces the forward strips with recorded history.
+  // #84: the rail pane renders in this direction too, gated on the
+  // selection like everything else in Trends.
   if (state.trendsDir === "back") {
-    rail.innerHTML = "";
+    rail.innerHTML = waRailHtml();
     renderLookBack(el);
     return;
   }
+  // #84: a selection from Look back never carries into Coming up.
+  if (state.trendsDay && state.trendsDay < startKey()) state.trendsDay = null;
   // #72: the pill card under the toggle (wide widths; CSS hides it
   // below 75em, where the day detail carries the block instead).
-  rail.innerHTML = waPillsHtml();
+  // #84: gated on the Trends selection — skeleton until a day is picked.
+  rail.innerHTML = waRailHtml();
   const start = startKey();
   const blocks: string[] = [];
   const weekPlans: { key: string; plan: DayPlan }[] = [];
@@ -1493,6 +1555,9 @@ function renderTrends(): void {
     <aside id="day-panel" class="card day-panel">${skDayPanelHtml()}
     </aside>
     </div>`;
+  // #84: a re-render (weather landing, env update) restores the
+  // selected day's panel instead of dropping it back to the skeleton.
+  if (state.trendsDay) fillDayPanel(state.trendsDay, false);
 
   // #44: separate Week / Month exports for the strip ranges, replacing
   // the old all-forecast-days button. The Settings toggles govern
@@ -1506,7 +1571,9 @@ function renderTrends(): void {
   };
   el.querySelectorAll<HTMLButtonElement>(".lb-dir").forEach((b) =>
     b.addEventListener("click", () => {
-      state.trendsDir = b.dataset.dir === "back" ? "back" : "up";
+      const dir = b.dataset.dir === "back" ? "back" : "up";
+      if (dir !== state.trendsDir) state.trendsDay = null; // #84
+      state.trendsDir = dir;
       renderTrends();
     }),
   );
@@ -1852,6 +1919,42 @@ function pillValue(r: EnvSignal): string {
   }
 }
 
+/** #84: the Trends Water & air rail pane before any day is picked —
+ *  pill-shaped skeletons under the header, no summary verdict, one
+ *  hint line. Nothing about today's conditions leaks in early: the
+ *  pane populates only on a selection, in both directions. */
+function waSkeletonHtml(): string {
+  const widths = [104, 118, 142, 96, 112];
+  return `
+    <div class="acard wa-card">
+      <h4>Water &amp; air</h4>
+      <div class="wa-pills">${widths.map((w) => `<span class="sk-pill" style="width:${w}px"></span>`).join("")}</div>
+      <p class="wa-note">Pick a day to see its conditions.</p>
+    </div>`;
+}
+
+/** #84: the rail pane with a past day picked. The checks describe
+ *  today only, so the populated state for a historic selection is the
+ *  honest note — never today's pills dressed up as that day's. */
+function waTodayOnlyHtml(): string {
+  return `
+    <div class="acard wa-card">
+      <h4>Water &amp; air <span class="wa-sum na">Today only</span></h4>
+      <p class="wa-note">These checks describe today only — a past day's conditions are never reconstructed.</p>
+    </div>`;
+}
+
+/** #84: what the Trends rail pane shows, keyed off the selection:
+ *  nothing picked → the skeleton; a past day → the today-only note;
+ *  today or a future day → the real pills (which carry their own
+ *  "Checking…" placeholders while the checks load, #73). */
+function waRailHtml(): string {
+  const key = state.trendsDay;
+  if (!key) return waSkeletonHtml();
+  if (key < startKey()) return waTodayOnlyHtml();
+  return waPillsHtml();
+}
+
 function waPillsHtml(): string {
   if (!state.place) return "";
   // #73: the card renders during loading too — pending families are
@@ -2057,19 +2160,32 @@ function wireDayDetail(root: HTMLElement, key: string): void {
   fitActionButtons();
 }
 
+/** #84: fill the wide Trends side panel with one day's detail. Used
+ *  by openDayDetail (a fresh tap, which also scrolls it into view) and
+ *  by renderTrends (restoring the selection after a re-render, which
+ *  must not scroll). Returns false when no panel is on the page. */
+function fillDayPanel(key: string, scroll: boolean): boolean {
+  const target = currentTarget();
+  const panel = $("#day-panel");
+  if (!target || !panel) return false;
+  panel.innerHTML = `<h3>${esc(fmtDay(key))} — ${esc(target.name)}</h3>${dayDetailHtml(key, true)}`;
+  wireDayDetail(panel, key);
+  if (scroll) panel.scrollIntoView({ block: "nearest" });
+  return true;
+}
+
 /** #28: at desktop widths the Trends day detail opens in a side panel;
- *  below that it stays a modal. */
+ *  below that it stays a modal. #84: the tap also records the Trends
+ *  selection, which the side panel and the Water & air pane key off. */
 function openDayDetail(key: string): void {
   const target = currentTarget();
   if (!target) return;
-  if (window.matchMedia("(min-width: 75em)").matches) {
-    const panel = $("#day-panel");
-    if (panel) {
-      panel.innerHTML = `<h3>${esc(fmtDay(key))} — ${esc(target.name)}</h3>${dayDetailHtml(key, true)}`;
-      wireDayDetail(panel, key);
-      panel.scrollIntoView({ block: "nearest" });
-      return;
-    }
+  state.trendsDay = key;
+  if (window.matchMedia("(min-width: 75em)").matches && fillDayPanel(key, true)) {
+    // #84: the rail pane follows the selection too.
+    const rail = $("#wa-rail");
+    if (rail && !$("#trends")?.hidden) rail.innerHTML = waRailHtml();
+    return;
   }
   $("#day-modal-title").textContent = `${fmtDay(key)} — ${target.name}`;
   const content = $("#day-modal-content");
@@ -2134,7 +2250,9 @@ const INFO_HTML = `
   <strong>recorded</strong> weather (Open-Meteo's past-days and archive data), gauge
   history and tide tables, and their details say "as it happened": what the day
   actually rated, not what its forecast promised. Water &amp; air checks describe
-  today only and are never reconstructed for a past day.</p>
+  today only and are never reconstructed for a past day. Look back has its own
+  print sheets — a picked day, the period on screen, its best days, or a whole
+  year — each stamped "as it happened".</p>
   <p class="note">Water temperature comes from a nearby USGS gauge when one is reporting;
   otherwise fish bands use air temperature as a labelled proxy. Rut windows for deer come from
   state-published peak-breeding data (AL/FL/GA/MS/TX) and are approximate — Tennessee publishes
@@ -2690,7 +2808,7 @@ themeMedia.addEventListener("change", () => {
 // Day = proof 31; Week = summary page, then details with the sheet header
 // repeated (38 + 40); Month = compact details only, no summary (37).
 
-type PrintMode = "day" | "week" | "month";
+type PrintMode = "day" | "week" | "month" | "hist-day" | "hist-period" | "hist-best" | "hist-year";
 
 const PRINT_FOOTER =
   "Zero Light provides planning guidance only. Ratings estimate fish and game activity — " +
@@ -2715,8 +2833,7 @@ function printSlotLine(s: DayPlan["slots"][number], compact = false): string {
   return `<div class="pslot"><strong>${esc(head)}</strong><div class="preason">${esc(s.reason)}</div></div>`;
 }
 
-function printDayFigs(key: string): { hi: string; lo: string; wind: string; rain: string } {
-  const hours = state.weather?.days.get(key) ?? [];
+function figsFromHours(hours: import("./scoring").HourWeather[]): { hi: string; lo: string; wind: string; rain: string } {
   if (!hours.length) return { hi: "—", lo: "—", wind: "—", rain: "—" };
   return {
     hi: `${Math.round(Math.max(...hours.map((h) => h.tempF)))}°`,
@@ -2724,6 +2841,15 @@ function printDayFigs(key: string): { hi: string; lo: string; wind: string; rain
     wind: `to ${Math.round(Math.max(...hours.map((h) => h.windMph)))} mph`,
     rain: `${Math.round(Math.max(...hours.map((h) => h.precipProb)))}%`,
   };
+}
+
+function printDayFigs(key: string): { hi: string; lo: string; wind: string; rain: string } {
+  return figsFromHours(state.weather?.days.get(key) ?? []);
+}
+
+/** #85: the same day figures for a past day, from its recorded hours. */
+function printHistFigs(key: string): { hi: string; lo: string; wind: string; rain: string } {
+  return figsFromHours(historyStore().days.get(key) ?? []);
 }
 
 /** #42: the held-back banner for print sheets, under each day's
@@ -2761,11 +2887,227 @@ function printDayBlock(key: string, compact: boolean): string {
   </div>`;
 }
 
+
+/** #85: the name of the historic period on screen, the way the print
+ *  menu and the sheet headers say it — "Last week · Nov 16 – Nov 22",
+ *  a month by its name, a drilled month, or a year at a glance. */
+function histPeriodLabel(): string {
+  if (state.lbKind === "year") {
+    if (state.lbYearMonth !== null) {
+      const keys = monthKeysOf(state.lbYear, state.lbYearMonth);
+      const name = parseDateKey(keys[0]).toLocaleDateString(undefined, { month: "long" });
+      return `${name} ${state.lbYear}`;
+    }
+    return `${state.lbYear} at a glance`;
+  }
+  const { keys, title } = lbPeriodKeys();
+  const fmt = (k: string) => parseDateKey(k).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (state.lbKind === "week") return `${state.lbAgo === 1 ? "Last week" : `${state.lbAgo} weeks ago`} · ${title}`;
+  if (state.lbKind === "days3") return `Last 3 days · ${fmt(keys[0])} – ${fmt(keys[keys.length - 1])}`;
+  return title;
+}
+
+/** #85: the historic period on screen as print input — its day keys,
+ *  how many best days its sheet lists, and whether it is a whole year
+ *  (the year sheet) rather than a period (the period sheet). */
+function histPrintContext(): { keys: string[]; bestN: number; year: boolean } {
+  if (state.lbKind === "year" && state.lbYearMonth !== null) {
+    return { keys: monthKeysOf(state.lbYear, state.lbYearMonth), bestN: 5, year: false };
+  }
+  if (state.lbKind === "year") {
+    const keys: string[] = [];
+    for (let m = 0; m < 12; m++) keys.push(...monthKeysOf(state.lbYear, m));
+    return { keys, bestN: 5, year: true };
+  }
+  const { keys } = lbPeriodKeys();
+  return { keys, bestN: state.lbKind === "month" ? 5 : 3, year: false };
+}
+
+const HIST_STAMP = `<p class="pnote"><strong>As it happened</strong> — scored from recorded weather, not from the forecast these days had.</p>`;
+const HIST_WA_LINE = `<p class="pnote">Water &amp; air checks describe today only and are not printed for past days.</p>`;
+
+/** #85: one past day as a print block — printDayBlock's shape, but the
+ *  plan and figures come from the recorded history, and the day's
+ *  seasonal note (#81) rides along, as it does in the day detail. */
+function printHistDayBlock(key: string, compact: boolean): string {
+  const target = currentTarget();
+  const plan = historyPlanForKey(key);
+  const figs = printHistFigs(key);
+  const band = bandWord(plan);
+  const figsLine = `High ${figs.hi} · Low ${figs.lo} · Wind ${figs.wind} · Rain chance ${figs.rain}`;
+  const typical = plan.typical ? " (typical-day estimate — no record for this day)" : "";
+  const note = target ? seasonalNoteFor(key, target) : null;
+  const noteHtml = note ? `<div class="pnote">${esc(note)}</div>` : "";
+  if (compact) {
+    return `
+    <div class="pcblock">
+      <div class="pstatus pband-${bandKey(plan)}"><strong>${esc(fmtDay(key))} — ${esc(band)}</strong> · ${figsLine}${typical}</div>
+      ${plan.veto ? `<div class="pveto">Don't go — ${esc(plan.veto)}</div>` : ""}
+      ${!plan.veto && plan.slots.length ? plan.slots.map((sl) => printSlotLine(sl, true)).join("") : ""}
+      ${!plan.veto && !plan.slots.length ? `<div class="pnone">No window rated Okay or better.</div>` : ""}
+      ${noteHtml}
+    </div>`;
+  }
+  const best = bestRange(plan);
+  return `
+  <div class="pdayblock">
+    <h3 class="pstatus pband-${bandKey(plan)}">${esc(fmtDay(key))} — ${esc(band)}</h3>
+    <div class="pdataline">Best window ${esc(best)} · ${figsLine}${typical}</div>
+    ${plan.veto ? `<div class="pveto">Don't go — ${esc(plan.veto)}</div>` : ""}
+    ${!plan.veto && plan.slots.length ? plan.slots.map((sl) => printSlotLine(sl)).join("") : ""}
+    ${!plan.veto && !plan.slots.length ? `<div class="pnone">No window rated Okay or better.</div>` : ""}
+    ${noteHtml}
+  </div>`;
+}
+
+/** #85: the facts rows for the historic day sheet — the forward day
+ *  sheet's rows, from recorded hours and historic tides. No live
+ *  gauge row: the gauge reading is today's, and this sheet is not. */
+function histDayRows(key: string, plan: DayPlan): [string, string][] {
+  const rows: [string, string][] = [
+    ["Sunrise / Sunset", `${fmtTime(plan.astro.sunrise)} / ${fmtTime(plan.astro.sunset)}`],
+  ];
+  const hours = historyStore().days.get(key) ?? [];
+  if (hours.length) {
+    const figs = printHistFigs(key);
+    rows.push(["High / Low", `${figs.hi} / ${figs.lo}`]);
+    rows.push(["Wind", figs.wind]);
+    rows.push(["Rain chance", figs.rain]);
+    const trend = pressureTrendPer6h(hours);
+    const inHg = (hours[hours.length - 1].pressureHpa * 0.02953).toFixed(2);
+    const word =
+      trend <= -1.5 ? "falling" : trend < -0.3 ? "falling slowly" : trend <= 0.3 ? "steady" : trend <= 1.5 ? "rising slowly" : "rising";
+    rows.push(["Pressure", `${inHg} inHg (${word})`]);
+  }
+  const tides = tidesForDay(state.historyTides, parseDateKey(key));
+  if (tides?.events.length) {
+    rows.push([
+      "Tides",
+      tides.events.map((e) => `${e.type} ${fmtTime(e.time)} (${e.heightFt.toFixed(1)} ft)`).join("; ") +
+        (state.tideStationName ? ` — NOAA station ${state.tideStationId} (${state.tideStationName})` : ""),
+    ]);
+  }
+  return rows;
+}
+
+/** #85: a year's numbers and mini-month cells for the year sheet —
+ *  the same counts and colours as the on-screen year glance (#82). */
+function histYearSheetParts(year: number): { summary: string; minis: string; monthLines: string[] } {
+  const store = historyStore();
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  let exc = 0;
+  let good = 0;
+  let poorRun = 0;
+  let longestPoor = 0;
+  const excByMonth = new Array(12).fill(0);
+  const goodByMonth = new Array(12).fill(0);
+  const minis: string[] = [];
+  for (let m = 0; m < 12; m++) {
+    const keys = monthKeysOf(year, m);
+    const lead = parseDateKey(keys[0]).getDay();
+    const cells: string[] = Array.from({ length: lead }, () => `<i class="blank"></i>`);
+    for (const k of keys) {
+      if (!store.days.has(k)) {
+        cells.push(`<i style="background:#d5dbd7"></i>`);
+        continue;
+      }
+      const plan = historyPlanForKey(k);
+      const band = plan.veto ? "Don't go" : dayBand(plan.dayScore);
+      if (band === "Excellent") { exc++; excByMonth[m]++; }
+      if (band === "Good") { good++; goodByMonth[m]++; }
+      if (band === "Poor" || band === "Don't go") { poorRun++; longestPoor = Math.max(longestPoor, poorRun); }
+      else poorRun = 0;
+      cells.push(`<i style="background:${BAND_COLORS[band]}${plan.typical ? ";opacity:.4" : ""}"></i>`);
+    }
+    minis.push(`<div class="py-mini"><div class="py-mini-name">${monthNames[m]}</div><div class="py-cells">${cells.join("")}</div></div>`);
+  }
+  let bestMonth = -1;
+  for (let m = 0; m < 12; m++) if (excByMonth[m] > 0 && (bestMonth < 0 || excByMonth[m] > excByMonth[bestMonth])) bestMonth = m;
+  const summary =
+    exc + good > 0
+      ? `${year} in short: ${exc} Excellent day${exc === 1 ? "" : "s"}, ${good} Good.` +
+        (bestMonth >= 0 ? ` Best month: ${monthNames[bestMonth]} (${excByMonth[bestMonth]} Excellent).` : "") +
+        (longestPoor >= 5 ? ` Longest poor stretch: ${longestPoor} days.` : "")
+      : `No recorded days in ${year} yet.`;
+  const monthLines = monthNames.map(
+    (name, m) => `${name}: ${excByMonth[m]} Excellent, ${goodByMonth[m]} Good`,
+  );
+  return { summary, minis: `<div class="py-grid">${minis.join("")}</div>`, monthLines };
+}
+
+/** #85: the historic print sheets (HTML). Every sheet carries the
+ *  standard header — logo lockup included — and the history stamp. */
+function renderHistPrint(mode: PrintMode): string {
+  const target = currentTarget();
+  if (!target) return "";
+  if (mode === "hist-day") {
+    const key = state.trendsDay;
+    if (!key || key >= startKey()) return "";
+    const plan = historyPlanForKey(key);
+    const rows = histDayRows(key, plan);
+    const note = seasonalNoteFor(key, target);
+    return `
+    ${printHeaderHtml("Day view — as it happened", fmtDay(key))}
+    <h2>Day rating: ${esc(bandWord(plan))}</h2>
+    ${plan.veto ? `<p class="pveto">Don't go — ${esc(plan.veto)}</p>` : ""}
+    ${HIST_STAMP}
+    <table class="pkv">${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
+    <h2>Best windows</h2>
+    ${plan.slots.length ? plan.slots.map((sl) => printSlotLine(sl)).join("") : `<p>No window rated Okay or better.</p>`}
+    ${note ? `<p class="pnote">${esc(note)}</p>` : ""}`;
+  }
+  if (mode === "hist-year") {
+    const year = state.lbYear;
+    const parts = histYearSheetParts(year);
+    const yearKeys = histPrintContext().keys;
+    const best = lbBestEntries(yearKeys, 5);
+    return `
+    ${printHeaderHtml("Year view — as it happened", `${year}`)}
+    ${HIST_STAMP}
+    <p>${esc(parts.summary)}</p>
+    ${parts.minis}
+    <h2>Best of ${year}</h2>
+    ${best.length ? best.map((e) => printHistDayBlock(e.key, true)).join("") : `<p>No day in ${year} has recorded weather yet.</p>`}`;
+  }
+  const ctx = histPrintContext();
+  if (mode === "hist-best") {
+    const entries = lbBestEntries(ctx.keys, ctx.bestN);
+    return `
+    ${printHeaderHtml("Best days — as it happened", histPeriodLabel())}
+    ${HIST_STAMP}
+    ${entries.length ? entries.map((e) => printHistDayBlock(e.key, true)).join("") : `<p>No day in this period has recorded weather yet.</p>`}
+    ${HIST_WA_LINE}`;
+  }
+  // hist-period
+  const sumRows = ctx.keys
+    .map((key) => {
+      const plan = historyPlanForKey(key);
+      const figs = printHistFigs(key);
+      const best = bestRange(plan);
+      return `<tr><td>${esc(fmtDay(key))}</td><td>${esc(bandWord(plan))}</td><td>${esc(best)}</td><td>${figs.hi} / ${figs.lo}</td></tr>`;
+    })
+    .join("");
+  return `
+    ${printHeaderHtml("Period view — as it happened", histPeriodLabel())}
+    ${HIST_STAMP}
+    <table class="psum"><thead><tr><th>Date</th><th>Rating</th><th>Best window</th><th>High / Low</th></tr></thead><tbody>${sumRows}</tbody></table>
+    ${HIST_WA_LINE}
+    <div class="pbreak"></div>
+    ${printHeaderHtml("Period view — as it happened", histPeriodLabel())}
+    <h2>Day details</h2>
+    ${ctx.keys.map((k) => printHistDayBlock(k, false)).join("")}`;
+}
+
 function renderPrint(mode: PrintMode): void {
   const target = currentTarget();
   if (!state.place || !target) return;
   const root = $("#print-root");
   const start = startKey();
+  // #85: historic sheets are built by their own renderer.
+  if (mode.startsWith("hist-")) {
+    root.innerHTML = `${renderHistPrint(mode)}<p class="pfooter">${esc(PRINT_FOOTER)}</p>`;
+    return;
+  }
   let body = "";
   if (mode === "day") {
     const key = addDaysKey(start, state.dayOffset);
@@ -2846,6 +3188,103 @@ function printSlotText(s: DayPlan["slots"][number], compact = false): string[] {
   return [head, s.reason];
 }
 
+
+/** #85: the historic sheets as a PDF print model — the same content
+ *  renderHistPrint puts on the HTML sheets, as plain lines (the year
+ *  glance's coloured grid becomes per-month counts; everything else
+ *  carries over line for line). */
+function buildHistPrintModel(mode: PrintMode, printed: string): PrintModel | null {
+  const target = currentTarget();
+  if (!state.place || !target) return null;
+  const sections: PrintSection[] = [];
+  let viewLine = "";
+  const stamp = "As it happened — scored from recorded weather, not from the forecast these days had.";
+  const dayLines = (key: string, compact: boolean): string[] => {
+    const plan = historyPlanForKey(key);
+    const figs = printHistFigs(key);
+    const lines: string[] = [
+      `${fmtDay(key)} — ${bandWord(plan)}`,
+      `Best window ${bestRange(plan)} · High ${figs.hi} · Low ${figs.lo} · Wind ${figs.wind} · Rain chance ${figs.rain}` +
+        (plan.typical ? " · Typical-day estimate (no record for this day)" : ""),
+    ];
+    if (plan.veto) lines.push(`Don't go — ${plan.veto}`);
+    else if (plan.slots.length) lines.push(...plan.slots.flatMap((sl) => printSlotText(sl, compact)));
+    else lines.push("No window rated Okay or better.");
+    const note = seasonalNoteFor(key, target);
+    if (note) lines.push(note);
+    return lines;
+  };
+  if (mode === "hist-day") {
+    const key = state.trendsDay;
+    if (!key || key >= startKey()) return null;
+    const plan = historyPlanForKey(key);
+    viewLine = `Day view — as it happened — ${fmtDay(key)}`;
+    const head: string[] = [`Day rating: ${bandWord(plan)}`];
+    if (plan.veto) head.push(`Don't go — ${plan.veto}`);
+    head.push(stamp);
+    for (const [k, v] of histDayRows(key, plan)) head.push(`${k}: ${v}`);
+    const note = seasonalNoteFor(key, target);
+    if (note) head.push(note);
+    sections.push({ lines: head });
+    sections.push({
+      heading: "Best windows",
+      lines: plan.slots.length ? plan.slots.flatMap((sl) => printSlotText(sl)) : ["No window rated Okay or better."],
+    });
+  } else if (mode === "hist-year") {
+    const year = state.lbYear;
+    const parts = histYearSheetParts(year);
+    viewLine = `Year view — as it happened — ${year}`;
+    sections.push({ lines: [stamp, parts.summary] });
+    sections.push({ heading: "Months", lines: parts.monthLines });
+    const best = lbBestEntries(histPrintContext().keys, 5);
+    const lines: string[] = [];
+    best.forEach((e, i) => {
+      if (i) lines.push("");
+      lines.push(...dayLines(e.key, true));
+    });
+    sections.push({ heading: `Best of ${year}`, lines: lines.length ? lines : [`No day in ${year} has recorded weather yet.`] });
+  } else if (mode === "hist-best") {
+    const ctx = histPrintContext();
+    viewLine = `Best days — as it happened — ${histPeriodLabel()}`;
+    const entries = lbBestEntries(ctx.keys, ctx.bestN);
+    const lines: string[] = [stamp];
+    entries.forEach((e, i) => {
+      if (i) lines.push("");
+      lines.push(...dayLines(e.key, true));
+    });
+    if (!entries.length) lines.push("No day in this period has recorded weather yet.");
+    lines.push("Water & air checks describe today only and are not printed for past days.");
+    sections.push({ lines });
+  } else {
+    const ctx = histPrintContext();
+    viewLine = `Period view — as it happened — ${histPeriodLabel()}`;
+    sections.push({
+      heading: "Period summary",
+      lines: [
+        stamp,
+        ...ctx.keys.map((key) => {
+          const plan = historyPlanForKey(key);
+          const figs = printHistFigs(key);
+          return `${fmtDay(key)} — ${bandWord(plan)} — Best window ${bestRange(plan)} — High/Low ${figs.hi} / ${figs.lo}`;
+        }),
+        "Water & air checks describe today only and are not printed for past days.",
+      ],
+    });
+    const detail: string[] = [];
+    ctx.keys.forEach((key, i) => {
+      if (i) detail.push("");
+      detail.push(...dayLines(key, false));
+    });
+    sections.push({ heading: "Day details", lines: detail });
+  }
+  return {
+    meta: [`${locationShortName()} · Target: ${target.name}`, viewLine, printed],
+    sections,
+    footer: PRINT_FOOTER,
+    ...(printLogoJpeg ? { logoJpeg: printLogoJpeg } : {}),
+  };
+}
+
 function buildPrintModel(mode: PrintMode): PrintModel | null {
   const target = currentTarget();
   if (!state.place || !target) return null;
@@ -2854,6 +3293,8 @@ function buildPrintModel(mode: PrintMode): PrintModel | null {
     `Printed ${now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}` +
     ` · ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   const start = startKey();
+  // #85: historic sheets have their own model builder.
+  if (mode.startsWith("hist-")) return buildHistPrintModel(mode, printed);
   const sections: PrintSection[] = [];
   let viewLine = "";
   if (mode === "day") {
@@ -2953,6 +3394,7 @@ function buildPrintModel(mode: PrintMode): PrintModel | null {
     meta: [`${locationShortName()} · Target: ${target.name}`, viewLine, printed],
     sections,
     footer: PRINT_FOOTER,
+    ...(printLogoJpeg ? { logoJpeg: printLogoJpeg } : {}),
   };
 }
 
@@ -3580,6 +4022,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     b.addEventListener("click", () => {
       document.querySelectorAll("#view-picker .chip").forEach((x) => x.classList.remove("selected"));
       b.classList.add("selected");
+      // #84: the Trends selection lives and dies inside Trends —
+      // entering the view always starts on the placeholder panel and
+      // the skeleton pane, as it did before selections were tracked.
+      state.trendsDay = null;
       state.view = (b as HTMLElement).dataset.view as "planner" | "trends";
       render();
     }),
@@ -3646,6 +4092,50 @@ window.addEventListener("DOMContentLoaded", async () => {
     closeInfoMenu();
     openModal("about-modal");
   });
+  // #85: the print menu follows the view. Coming up keeps the plain
+  // Day / Week / Month rows; in Look back the rows retitle to the
+  // period on screen and the picked day, each row carrying the print
+  // mode it runs in data-mode. Print day waits for a past-day pick,
+  // the same gating as the Trends panes (#84).
+  function syncPrintMenu(): void {
+    const setRow = (id: string, label: string, sub: string, mode: PrintMode, disabled: boolean) => {
+      const btn = $<HTMLButtonElement>(`#${id}`);
+      btn.firstChild!.textContent = label;
+      $<HTMLSpanElement>(`#${id}-sub`).textContent = sub;
+      btn.dataset.mode = mode;
+      btn.disabled = disabled;
+    };
+    if (state.view !== "trends" || state.trendsDir !== "back") {
+      setRow("print-day", "Print day", "", "day", false);
+      setRow("print-week", "Print week", "", "week", false);
+      setRow("print-month", "Print month", "", "month", false);
+      return;
+    }
+    const picked = state.trendsDay;
+    if (picked && picked < startKey()) {
+      setRow("print-day", "Print day", `${fmtDay(picked)} — as it happened`, "hist-day", false);
+    } else if (picked) {
+      setRow("print-day", "Print day", "Today prints from Coming up", "hist-day", true);
+    } else {
+      setRow("print-day", "Print day", "Pick a day first", "hist-day", true);
+    }
+    if (state.lbKind === "year" && state.lbYearMonth === null) {
+      setRow("print-week", "Print year", `${state.lbYear} at a glance + best of the year`, "hist-year", false);
+      setRow("print-month", "Print best days", `Best of ${state.lbYear}, one page`, "hist-best", false);
+    } else {
+      setRow("print-week", "Print period", histPeriodLabel(), "hist-period", false);
+      const bestSub =
+        state.lbKind === "year"
+          ? "The month's best days, one page"
+          : state.lbKind === "month"
+            ? "The month's best days, one page"
+            : state.lbKind === "days3"
+              ? "The 3 days' best, one page"
+              : "The week's best days, one page";
+      setRow("print-month", "Print best days", bestSub, "hist-best", false);
+    }
+  }
+
   $("#print-btn").addEventListener("click", (e) => {
     e.stopPropagation();
     closeInfoMenu();
@@ -3654,7 +4144,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     const menu = $("#print-menu");
     const willOpen = menu.hidden;
     menu.hidden = !willOpen;
-    if (willOpen) placeMenu($("#print-btn"), menu);
+    if (willOpen) {
+      syncPrintMenu();
+      placeMenu($("#print-btn"), menu);
+    }
     $("#print-btn").setAttribute("aria-expanded", String(willOpen));
   });
   // #35: an open menu closes when the page scrolls or resizes (the
@@ -3678,15 +4171,15 @@ window.addEventListener("DOMContentLoaded", async () => {
   );
   $("#print-day").addEventListener("click", () => {
     closePrintMenu();
-    doPrint("day");
+    doPrint((($("#print-day") as HTMLElement).dataset.mode as PrintMode | undefined) ?? "day");
   });
   $("#print-week").addEventListener("click", () => {
     closePrintMenu();
-    doPrint("week");
+    doPrint((($("#print-week") as HTMLElement).dataset.mode as PrintMode | undefined) ?? "week");
   });
   $("#print-month").addEventListener("click", () => {
     closePrintMenu();
-    doPrint("month");
+    doPrint((($("#print-month") as HTMLElement).dataset.mode as PrintMode | undefined) ?? "month");
   });
   document.addEventListener("click", (e) => {
     // #72: pill taps toggle/move the balloon; a tap inside the
@@ -3898,7 +4391,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Rust app-info command (replaces the foundation's greet example).
   // The version lives in the About modal only (#27 removed the footer).
-  let versionLabel = "Zero Light 1.1.0";
+  let versionLabel = "Zero Light 1.2.0";
   try {
     versionLabel = await invoke<string>("app_info");
     // #47/#48: learn the hosting OS once; null stays for the web build.
